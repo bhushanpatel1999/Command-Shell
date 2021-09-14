@@ -5,6 +5,17 @@
 #include <cstdio>
 #include <cinttypes>
 #include <cassert>
+#include <malloc.h>
+
+// Global variables
+
+int nactive_var;
+int active_size_var;
+int ntotal_var;
+int total_size_var;
+int nfail_var;
+int fail_size_var;
+int free_var;
 
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
@@ -15,6 +26,20 @@
 void* m61_malloc(size_t sz, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
     // Your code here.
+
+    // if m61_malloc returns a NULL pointer, the allocation failed
+    if (base_malloc(sz) != NULL) {
+      // Increase ntotal_var everytime malloc is called
+      ++ntotal_var;
+      // Increase total_size_var by the size of argument, which is number of bytes allocated
+      total_size_var += sz;
+    }
+    else {
+      ++nfail_var;
+      fail_size_var += sz;
+    }
+
+
     return base_malloc(sz);
 }
 
@@ -27,6 +52,9 @@ void* m61_malloc(size_t sz, const char* file, long line) {
 void m61_free(void* ptr, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
     // Your code here.
+    if (ptr != nullptr) {
+      ++free_var;
+    }
     base_free(ptr);
 }
 
@@ -55,6 +83,15 @@ void m61_get_statistics(m61_statistics* stats) {
     // Stub: set all statistics to enormous numbers
     memset(stats, 255, sizeof(m61_statistics));
     // Your code here.
+    // Initialized the stats struct
+    memset(stats, 0, sizeof(m61_statistics));
+    // Assign global variable to corresponding struct element
+    stats->ntotal = ntotal_var;
+    nactive_var = ntotal_var - free_var;
+    stats->nactive = nactive_var;
+    stats->total_size = total_size_var;
+    stats->nfail = nfail_var;
+    stats->fail_size = fail_size_var;
 }
 
 
