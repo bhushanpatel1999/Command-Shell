@@ -5,7 +5,8 @@
 #include <cstdio>
 #include <cinttypes>
 #include <cassert>
-#include <malloc.h>
+#include <map>
+
 
 // Global variables
 
@@ -16,6 +17,12 @@ int total_size_var;
 int nfail_var;
 int fail_size_var;
 int free_var;
+int free_var_calloc;
+long free_var_bytes;
+long* heap_list_min;
+long* heap_list_max = 0;
+
+std::map<long, long> mp;
 
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
@@ -25,22 +32,38 @@ int free_var;
 
 void* m61_malloc(size_t sz, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
+    long int* b_m = (long int*)base_malloc(sz);
     // Your code here.
-
     // if m61_malloc returns a NULL pointer, the allocation failed
-    if (base_malloc(sz) != NULL) {
+    if (b_m != NULL) {
       // Increase ntotal_var everytime malloc is called
       ++ntotal_var;
       // Increase total_size_var by the size of argument, which is number of bytes allocated
       total_size_var += sz;
+      //Initialize min and max heap if NULL
+      if (heap_list_min == NULL) {
+        heap_list_min = b_m;
+      }
+
+      if (heap_list_max == NULL) {
+        heap_list_min = b_m + sz;
+      }
+      // Functions to compare current allocation min/max to global min/max
+      if (b_m < heap_list_min) {
+        heap_list_min = b_m;
+      }
+
+      if ((b_m + sz) > heap_list_max) {
+        heap_list_max = b_m + sz;
+      }
+
     }
     else {
       ++nfail_var;
       fail_size_var += sz;
     }
 
-
-    return base_malloc(sz);
+    return b_m;
 }
 
 
@@ -54,6 +77,9 @@ void m61_free(void* ptr, const char* file, long line) {
     // Your code here.
     if (ptr != nullptr) {
       ++free_var;
+      long ptr_key = (long) ptr;
+      free_var_bytes += (long) &(*mp.find(ptr_key));
+      active_size_var = total_size_var - free_var_bytes;
     }
     base_free(ptr);
 }
@@ -71,7 +97,11 @@ void* m61_calloc(size_t nmemb, size_t sz, const char* file, long line) {
     void* ptr = m61_malloc(nmemb * sz, file, line);
     if (ptr) {
         memset(ptr, 0, nmemb * sz);
+        active_size_var += nmemb*sz;
+        long ptr_key = (long) ptr;
+        mp[ptr_key] = nmemb*sz;
     }
+
     return ptr;
 }
 
@@ -86,12 +116,15 @@ void m61_get_statistics(m61_statistics* stats) {
     // Initialized the stats struct
     memset(stats, 0, sizeof(m61_statistics));
     // Assign global variable to corresponding struct element
-    stats->ntotal = ntotal_var;
     nactive_var = ntotal_var - free_var;
     stats->nactive = nactive_var;
+    stats->active_size = active_size_var;
+    stats->ntotal = ntotal_var;
     stats->total_size = total_size_var;
     stats->nfail = nfail_var;
     stats->fail_size = fail_size_var;
+    stats->heap_min = (uintptr_t)heap_list_min;
+    stats->heap_max = (uintptr_t)heap_list_max;
 }
 
 
