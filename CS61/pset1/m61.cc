@@ -6,6 +6,7 @@
 #include <cinttypes>
 #include <cassert>
 #include <map>
+#include <unordered_set>
 
 
 // Global variables
@@ -22,7 +23,8 @@ long free_var_bytes;
 long* heap_list_min;
 long* heap_list_max = 0;
 
-std::map<long, long> mp;
+std::map<void*, long> mp;
+std::unordered_set<void*> doublefree_checker;
 
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
@@ -32,29 +34,38 @@ std::map<long, long> mp;
 
 void* m61_malloc(size_t sz, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
-    long int* b_m = (long int*)base_malloc(sz);
+    if (sz)
+    char* b_m = (char*)base_malloc(sz); //Allocate extra spot for metadata
+    if (b_m) {
+      b_m[sz] = (long int) 50; //Assign canary value
+    }
+    long int* b_m_1 = (long int*) b_m; //Cast to long int to work with heap variables
+
     // Your code here.
     // if m61_malloc returns a NULL pointer, the allocation failed
-    if (b_m != NULL) {
+    if (b_m_1 != NULL) {
       // Increase ntotal_var everytime malloc is called
       ++ntotal_var;
       // Increase total_size_var by the size of argument, which is number of bytes allocated
       total_size_var += sz;
+      // Use unordered map to keep track of active bytes corresponding to a malloc-returned pointer
+      active_size_var += sz;
+      mp[b_m_1] = sz;
       //Initialize min and max heap if NULL
       if (heap_list_min == NULL) {
-        heap_list_min = b_m;
+        heap_list_min = b_m_1;
       }
 
       if (heap_list_max == NULL) {
-        heap_list_min = b_m + sz;
+        heap_list_min = b_m_1 + sz;
       }
       // Functions to compare current allocation min/max to global min/max
-      if (b_m < heap_list_min) {
-        heap_list_min = b_m;
+      if (b_m_1 < heap_list_min) {
+        heap_list_min = b_m_1;
       }
 
-      if ((b_m + sz) > heap_list_max) {
-        heap_list_max = b_m + sz;
+      if ((b_m_1 + sz) > heap_list_max) {
+        heap_list_max = b_m_1 + sz;
       }
 
     }
@@ -63,7 +74,7 @@ void* m61_malloc(size_t sz, const char* file, long line) {
       fail_size_var += sz;
     }
 
-    return b_m;
+    return b_m_1;
 }
 
 
@@ -75,13 +86,35 @@ void* m61_malloc(size_t sz, const char* file, long line) {
 void m61_free(void* ptr, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
     // Your code here.
-    if (ptr != nullptr) {
+    if (ptr != nullptr && mp[ptr]) { //Second argument ensure input pointer is returned from malloc
+      long actual_size = (long) (mp[ptr] + 1); // Get size of allocated block from map
+      char* ptr_1 = (char*) ptr;  // Cast input ptr to char type
+      if (ptr_1[actual_size - 1] != 50) { // Checks if the "metadata" has been changed
+        fprintf(stderr, "MEMORY BUG: detected wild write during free of pointer %p\n", ptr);
+        abort();
+      }
       ++free_var;
-      long ptr_key = (long) ptr;
-      free_var_bytes += (long) &(*mp.find(ptr_key));
-      active_size_var = total_size_var - free_var_bytes;
+      free_var_bytes += (long) mp[ptr]; //Get number of active allocated bytes from map
+      doublefree_checker.insert(ptr);
+      mp.erase(ptr); //Remove pointer from map after freeing to keep metadata bounded
+      base_free(ptr);
     }
-    base_free(ptr);
+    else if (ptr != nullptr && doublefree_checker.count(ptr) != 0){//Second argument checks
+      //if ptr has been freed already, output error
+      fprintf(stderr, "MEMORY BUG: invalid free of pointer %p, double free\n", ptr);
+      abort();
+    }
+    else if (ptr == nullptr) {
+      base_free(ptr);
+    }
+    else if (ptr < heap_list_min || ptr > heap_list_max) {
+      fprintf(stderr, "MEMORY BUG: test%s.cc:%li: invalid free of pointer %p, not in heap\n", file, line, ptr);
+      abort();
+    }
+    else {
+      fprintf(stderr, "MEMORY BUG: test%s.cc:%li: invalid free of pointer %p, not allocated\n", file, line, ptr);
+      abort();
+    }
 }
 
 
@@ -94,12 +127,13 @@ void m61_free(void* ptr, const char* file, long line) {
 
 void* m61_calloc(size_t nmemb, size_t sz, const char* file, long line) {
     // Your code here (to fix test019).
+    if ((nmemb * sz)/nmemb != sz){
+      nfail_var++;
+      return nullptr;
+    }
     void* ptr = m61_malloc(nmemb * sz, file, line);
     if (ptr) {
         memset(ptr, 0, nmemb * sz);
-        active_size_var += nmemb*sz;
-        long ptr_key = (long) ptr;
-        mp[ptr_key] = nmemb*sz;
     }
 
     return ptr;
@@ -118,6 +152,7 @@ void m61_get_statistics(m61_statistics* stats) {
     // Assign global variable to corresponding struct element
     nactive_var = ntotal_var - free_var;
     stats->nactive = nactive_var;
+    active_size_var = total_size_var - free_var_bytes;
     stats->active_size = active_size_var;
     stats->ntotal = ntotal_var;
     stats->total_size = total_size_var;

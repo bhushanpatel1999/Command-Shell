@@ -13,6 +13,7 @@ int main() {
     }
     size_t very_large_size = (size_t) -1;
     void* garbage = malloc(very_large_size);
+    fprintf(stderr, "%lu", very_large_size);
     assert(!garbage);
     m61_print_statistics();
 }
