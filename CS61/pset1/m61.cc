@@ -22,6 +22,8 @@ int free_var_calloc;
 long free_var_bytes;
 long* heap_list_min;
 long* heap_list_max = 0;
+long file_number;
+long file_line;
 
 std::map<void*, long> mp;
 std::unordered_set<void*> doublefree_checker;
@@ -34,7 +36,13 @@ std::unordered_set<void*> doublefree_checker;
 
 void* m61_malloc(size_t sz, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
-    if (sz)
+    file_number = (long) *file;
+    file_line = line;
+    if ((sz*100/sz) != 100) {
+      ++nfail_var;
+      fail_size_var += sz;
+      return NULL;
+    }
     char* b_m = (char*)base_malloc(sz); //Allocate extra spot for metadata
     if (b_m) {
       b_m[sz] = (long int) 50; //Assign canary value
@@ -183,6 +191,9 @@ void m61_print_statistics() {
 
 void m61_print_leak_report() {
     // Your code here.
+    for (auto it = mp.begin(); it != mp.end(); ++it) {
+      fprintf(stdout, "LEAK CHECK: test%li.cc:%li: allocated object %p with size %li\n", file_number, file_line, it->first, it->second);
+    }
 }
 
 
