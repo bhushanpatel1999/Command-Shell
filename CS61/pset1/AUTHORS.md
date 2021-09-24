@@ -9,6 +9,7 @@ Bhushan Patel
 Collaborators
 -------------
 Gabe Mehra
+Jules Muhizi
 
 
 Citations
