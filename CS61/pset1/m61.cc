@@ -7,7 +7,8 @@
 #include <cassert>
 #include <map>
 #include <unordered_set>
-
+#include <unordered_map>
+#include <algorithm>
 
 // Global variables
 
@@ -23,9 +24,10 @@ long free_var_bytes;
 long* heap_list_min;
 long* heap_list_max = 0;
 long file_number;
-long file_line;
 
 std::map<void*, long> mp;
+std::unordered_map<void*, long> line_number;
+std::map<std::pair<const char*, long>, long> line_size;
 std::unordered_set<void*> doublefree_checker;
 
 /// m61_malloc(sz, file, line)
@@ -37,13 +39,12 @@ std::unordered_set<void*> doublefree_checker;
 void* m61_malloc(size_t sz, const char* file, long line) {
     (void) file, (void) line;   // avoid uninitialized variable warnings
     file_number = (long) *file;
-    file_line = line;
     if ((sz*100/sz) != 100) {
       ++nfail_var;
       fail_size_var += sz;
-      return NULL;
+      return nullptr;
     }
-    char* b_m = (char*)base_malloc(sz); //Allocate extra spot for metadata
+    char* b_m = (char*)base_malloc(sz + 1); //Allocate extra spot for metadata
     if (b_m) {
       b_m[sz] = (long int) 50; //Assign canary value
     }
@@ -59,6 +60,13 @@ void* m61_malloc(size_t sz, const char* file, long line) {
       // Use unordered map to keep track of active bytes corresponding to a malloc-returned pointer
       active_size_var += sz;
       mp[b_m_1] = sz;
+      if (line_size.count({file, line}) != 0) {
+        line_size[{file, line}] += sz;
+      }
+      else {
+        line_size[{file, line}] = sz;
+      }
+      line_number[b_m_1] = line;
       //Initialize min and max heap if NULL
       if (heap_list_min == NULL) {
         heap_list_min = b_m_1;
@@ -119,8 +127,15 @@ void m61_free(void* ptr, const char* file, long line) {
       fprintf(stderr, "MEMORY BUG: test%s.cc:%li: invalid free of pointer %p, not in heap\n", file, line, ptr);
       abort();
     }
-    else {
+    else if (!mp[ptr]) {
       fprintf(stderr, "MEMORY BUG: test%s.cc:%li: invalid free of pointer %p, not allocated\n", file, line, ptr);
+      for (auto it = mp.begin(); it != mp.end(); ++it) {
+        if (ptr > it->first && (uintptr_t)ptr < ((uintptr_t)it->first + (uintptr_t)it->second)) {
+          long difference = (uintptr_t) ptr - (uintptr_t) it->first;
+          fprintf(stderr, "test%li.cc:9: %p is %li bytes inside a %li byte region allocated here", file_number, ptr, difference, it->second);
+          abort();
+        }
+      }
       abort();
     }
 }
@@ -192,7 +207,7 @@ void m61_print_statistics() {
 void m61_print_leak_report() {
     // Your code here.
     for (auto it = mp.begin(); it != mp.end(); ++it) {
-      fprintf(stdout, "LEAK CHECK: test%li.cc:%li: allocated object %p with size %li\n", file_number, file_line, it->first, it->second);
+      fprintf(stdout, "LEAK CHECK: test%li.cc:%li: allocated object %p with size %li\n", file_number, line_number[it->first], it->first, it->second);
     }
 }
 
@@ -202,4 +217,19 @@ void m61_print_leak_report() {
 
 void m61_print_heavy_hitter_report() {
     // Your heavy-hitters code here
+    std::map<long, std::pair<const char*, long>> sort_map;
+    long total_map_bytes = 0;
+    for (auto it = line_size.begin(); it != line_size.end(); ++it) {
+      total_map_bytes += it->second;
+    }
+    for (auto it = line_size.begin(); it != line_size.end(); ++it) {
+      float byte_fraction = ((float) it->second / (float) total_map_bytes);
+      if (byte_fraction >= 0.20) {
+        sort_map[it->second] = {it->first.first, it->first.second};
+      }
+    }
+    for (auto it = sort_map.rbegin(); it != sort_map.rend(); ++it) {
+      float byte_percent = 100*((float) it->first / (float) total_map_bytes);
+      fprintf(stdout, "HEAVY HITTER: %s:%li: %li bytes (~%.1f%%)\n", it->second.first, it->second.second, it->first, byte_percent);
+    }
 }
