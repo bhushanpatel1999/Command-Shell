@@ -7,8 +7,7 @@ collaborators, in `AUTHORS.md`.
 
 Grading notes (if any)
 ----------------------
-
-DO NOT GRADE
+DO NOT GRADE (submitted 10/26 at ~3:30 PM)
 
 Extra credit attempted (if any)
 -------------------------------

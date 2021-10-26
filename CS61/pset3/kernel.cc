@@ -140,7 +140,7 @@ void* kalloc(size_t sz) {
 
 void kfree(void* kptr) {
     if (kptr) {
-        (void) kptr;
+        // Decrement refcount if freeing pages
         --physpages[(uintptr_t) kptr / PAGESIZE].refcount;
     }
 }
@@ -157,7 +157,7 @@ void process_setup(pid_t pid, const char* program_name) {
     // initialize process page table
     ptable[pid].pagetable = kalloc_pagetable();
 
-    // Use it.map to copy page tables
+    // Use it.map to copy page tables (identity mapping)
     for (vmiter it(ptable[pid].pagetable, 0), it_1(kernel_pagetable); it.va() < PROC_START_ADDR; 
         it += PAGESIZE,it_1 += PAGESIZE) {
             it.map(it_1.pa(), it_1.perm());
@@ -175,9 +175,13 @@ void process_setup(pid_t pid, const char* program_name) {
             // (The handout code requires that the corresponding physical
             // address is currently free.)
 
+            // Allocate physical memory for segment 
             void* kalloc_seg = kalloc(PAGESIZE);
+
+            // Initialize pagetable at "a & -4096" which will page-align it
             vmiter it_a(ptable[pid].pagetable, a & -4096);
 
+            // Check if writable and if so then map with writable or read-only permissions
             if (seg.writable()) {
                 it_a.map(kalloc_seg, PTE_P | PTE_U | PTE_W);
             }
@@ -185,12 +189,15 @@ void process_setup(pid_t pid, const char* program_name) {
                 it_a.map(kalloc_seg, PTE_P | PTE_U);
             }
 
+            // Don't need assert statement anymore because using kalloc
             // assert(physpages[a / PAGESIZE].refcount == 0);
             // ++physpages[a / PAGESIZE].refcount;
         }
     }
     // initialize data in loadable segments
     for (auto seg = pgm.begin(); seg != pgm.end(); ++seg) {
+        
+        // iterator for physical address 
         void* pa = vmiter(ptable[pid].pagetable, seg.va()).kptr();
         memset((void*) pa, 0, seg.size());
         memcpy((void*) pa, seg.data(), seg.data_size());
@@ -207,11 +214,17 @@ void process_setup(pid_t pid, const char* program_name) {
 
     // The handout code requires that the corresponding physical address
     // is currently free.
+
     // assert(physpages[stack_addr / PAGESIZE].refcount == 0);
     // ++physpages[stack_addr / PAGESIZE].refcount;
+
+
     ptable[pid].regs.reg_rsp = stack_addr + PAGESIZE;
+
+    // Use kalloc for physical stack allocation
     void* kalloc_stack = kalloc(PAGESIZE);
     vmiter(ptable[pid].pagetable, stack_addr).map(kalloc_stack, PTE_P | PTE_U | PTE_W);
+
     // mark process as runnable
     ptable[pid].state = P_RUNNABLE;
 }
@@ -303,8 +316,13 @@ void exception(regstate* regs) {
 
 int syscall_page_alloc(uintptr_t addr);
 
+// Define new exit function
 void syscall_exit(pid_t pid) {
+
+    //Initialize iterator
     vmiter free_it(ptable[pid].pagetable, 0);
+
+    // Iterate through and free based on permissions
     while (free_it.va() < MEMSIZE_VIRTUAL) {
         if (free_it.pa() != CONSOLE_ADDR && free_it.present() && free_it.user()) {
             kfree(free_it.kptr());
@@ -312,9 +330,12 @@ void syscall_exit(pid_t pid) {
         free_it += PAGESIZE;
     }
 
+    // Use physical iterator to also free physical memory used to represent page tables
     for (ptiter it(ptable[pid].pagetable); it.va() < MEMSIZE_VIRTUAL; it.next()) {
         kfree(it.kptr());
     }
+
+    // Set state to free to use later
     ptable[pid].state = P_FREE;
     kfree((void*)ptable[pid].pagetable);
 }
@@ -325,6 +346,7 @@ void syscall_exit(pid_t pid) {
 //    in `u-lib.hh` (but in the handout code, it does not).
 
 int syscall_page_alloc(uintptr_t addr) {
+
     // Meets requiremetns in u-lib.hh
     if (addr % 4096 == 0 && addr >= PROC_START_ADDR && addr < MEMSIZE_VIRTUAL) {
         void *kalloc_mem = kalloc(PAGESIZE);
@@ -336,11 +358,16 @@ int syscall_page_alloc(uintptr_t addr) {
 
         int test = vmiter(ptable[current->pid].pagetable, addr).try_map(kalloc_mem, PTE_P | PTE_U | PTE_W);
         if (test < 0) {
+
+            // Freeing if try_map allocation failed
             kfree(kalloc_mem);
             return -1;
         }
+
         // assert(physpages[addr / PAGESIZE].refcount == 0);
         // ++physpages[addr / PAGESIZE].refcount;
+
+        // Initialize memory
         memset((void*) kalloc_mem, 0, PAGESIZE);
         return 0;
     }
@@ -351,40 +378,42 @@ int syscall_page_alloc(uintptr_t addr) {
 }
 
 pid_t syscall_fork() {
+    // Iterate through array of process descriptors and find free slot
     for (pid_t i = 1; i < NPROC; ++i) {
+
+        // Proceed if free slot
         if (ptable[i].state == P_FREE){
             pid_t proc_num = i;
-            // ptable[proc_num].pid = proc_num;
             
+            // kalloc a new page table
             ptable[proc_num].pagetable = kalloc_pagetable();
             if (ptable[proc_num].pagetable == nullptr) {
+                
+                // Free if kalloc failed
                 kfree(ptable[proc_num].pagetable);
                 return -1;
             }
 
+            // Initialize parent and child page table iterators
             vmiter parent(ptable[current->pid].pagetable, 0);
             vmiter child(ptable[proc_num].pagetable, 0);
 
+            // Check all virtual memory
             while (parent.va() < MEMSIZE_VIRTUAL) {
                 if (parent.present()) {
+
+                    // First condition to set identical mappings/permissions for < PROC_START_ADDR
                     if (parent.va() < PROC_START_ADDR) {
                         int test = child.try_map(parent.pa(), parent.perm());
                         if (test < 0) {
+                            // Use syscall to properly exit failed mapping
                             syscall_exit(proc_num);
                             return -1;
                         }
                     }
 
-                    if (!parent.writable() && parent.user()) {
-                        child.map(parent.pa(), parent.perm());
-                        // if (test < 0) {
-                        //     syscall_exit(proc_num);
-                        //     return -1;
-                        // }
-                        ++physpages[parent.pa() / PAGESIZE].refcount;
-                    }
-
-                    else if (parent.va() != CONSOLE_ADDR && parent.writable() && parent.user()) {
+                    // Second check to see if writable and user accessbile and NOT console address
+                    if (parent.va() != CONSOLE_ADDR && parent.writable() && parent.user()) {
                         void* new_page = kalloc(PAGESIZE);
                         if (new_page == nullptr) {
                             syscall_exit(proc_num);
@@ -396,14 +425,25 @@ pid_t syscall_fork() {
                             syscall_exit(proc_num);
                             return -1;
                         }
+                        // Copy requisite permissions
                         memcpy(new_page, (const void*) parent.pa(), PAGESIZE);
+                    }
+
+                    // Last check to check for read-only
+                    else if (!parent.writable() && parent.user()) {
+                        child.map(parent.pa(), parent.perm());
+                        ++physpages[parent.pa() / PAGESIZE].refcount;
                     }
 
                     
                 }
+
+                // Advance iterator
                 parent += PAGESIZE;
                 child += PAGESIZE; 
             }
+
+            // Set registers as copy of parent process (except rax)
             ptable[proc_num].regs = current->regs;
             ptable[proc_num].regs.reg_rax = 0;
             ptable[proc_num].state = P_RUNNABLE;
@@ -451,6 +491,7 @@ uintptr_t syscall(regstate* regs) {
     case SYSCALL_FORK:
         return syscall_fork();
 
+    // Implement exit
     case SYSCALL_EXIT:
         syscall_exit(current->pid);
         schedule();
