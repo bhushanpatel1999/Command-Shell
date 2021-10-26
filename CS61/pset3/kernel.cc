@@ -64,8 +64,14 @@ void kernel_start(const char* command) {
          it.va() < MEMSIZE_PHYSICAL;
          it += PAGESIZE) {
         if (it.va() != 0) {
-            it.map(it.va(), PTE_P | PTE_W | PTE_U);
-        } else {
+            if (it.va() >= PROC_START_ADDR || it.va() == CONSOLE_ADDR) {
+                it.map(it.va(), PTE_P | PTE_W | PTE_U);
+            }
+            else {
+                it.map(it.va(), PTE_P | PTE_W);
+            }
+        } 
+        else {
             // nullptr is inaccessible even to the kernel
             it.map(it.va(), 0);
         }
@@ -133,8 +139,10 @@ void* kalloc(size_t sz) {
 //    If `kptr == nullptr` does nothing.
 
 void kfree(void* kptr) {
-    (void) kptr;
-    assert(false /* your code here */);
+    if (kptr) {
+        (void) kptr;
+        --physpages[(uintptr_t) kptr / PAGESIZE].refcount;
+    }
 }
 
 
@@ -147,7 +155,13 @@ void process_setup(pid_t pid, const char* program_name) {
     init_process(&ptable[pid], 0);
 
     // initialize process page table
-    ptable[pid].pagetable = kernel_pagetable;
+    ptable[pid].pagetable = kalloc_pagetable();
+
+    // Use it.map to copy page tables
+    for (vmiter it(ptable[pid].pagetable, 0), it_1(kernel_pagetable); it.va() < PROC_START_ADDR; 
+        it += PAGESIZE,it_1 += PAGESIZE) {
+            it.map(it_1.pa(), it_1.perm());
+        }
 
     // obtain reference to the program image
     program_image pgm(program_name);
@@ -160,15 +174,26 @@ void process_setup(pid_t pid, const char* program_name) {
             // `a` is the process virtual address for the next code or data page
             // (The handout code requires that the corresponding physical
             // address is currently free.)
-            assert(physpages[a / PAGESIZE].refcount == 0);
-            ++physpages[a / PAGESIZE].refcount;
+
+            void* kalloc_seg = kalloc(PAGESIZE);
+            vmiter it_a(ptable[pid].pagetable, a & -4096);
+
+            if (seg.writable()) {
+                it_a.map(kalloc_seg, PTE_P | PTE_U | PTE_W);
+            }
+            else {
+                it_a.map(kalloc_seg, PTE_P | PTE_U);
+            }
+
+            // assert(physpages[a / PAGESIZE].refcount == 0);
+            // ++physpages[a / PAGESIZE].refcount;
         }
     }
-
     // initialize data in loadable segments
     for (auto seg = pgm.begin(); seg != pgm.end(); ++seg) {
-        memset((void*) seg.va(), 0, seg.size());
-        memcpy((void*) seg.va(), seg.data(), seg.data_size());
+        void* pa = vmiter(ptable[pid].pagetable, seg.va()).kptr();
+        memset((void*) pa, 0, seg.size());
+        memcpy((void*) pa, seg.data(), seg.data_size());
     }
 
     // mark entry point
@@ -176,13 +201,17 @@ void process_setup(pid_t pid, const char* program_name) {
 
     // allocate and map stack segment
     // Compute process virtual address for stack page
-    uintptr_t stack_addr = PROC_START_ADDR + PROC_SIZE * pid - PAGESIZE;
+
+    // Make sure stack grows down 
+    uintptr_t stack_addr = MEMSIZE_VIRTUAL - PAGESIZE;
+
     // The handout code requires that the corresponding physical address
     // is currently free.
-    assert(physpages[stack_addr / PAGESIZE].refcount == 0);
-    ++physpages[stack_addr / PAGESIZE].refcount;
+    // assert(physpages[stack_addr / PAGESIZE].refcount == 0);
+    // ++physpages[stack_addr / PAGESIZE].refcount;
     ptable[pid].regs.reg_rsp = stack_addr + PAGESIZE;
-
+    void* kalloc_stack = kalloc(PAGESIZE);
+    vmiter(ptable[pid].pagetable, stack_addr).map(kalloc_stack, PTE_P | PTE_U | PTE_W);
     // mark process as runnable
     ptable[pid].state = P_RUNNABLE;
 }
@@ -274,6 +303,116 @@ void exception(regstate* regs) {
 
 int syscall_page_alloc(uintptr_t addr);
 
+void syscall_exit(pid_t pid) {
+    vmiter free_it(ptable[pid].pagetable, 0);
+    while (free_it.va() < MEMSIZE_VIRTUAL) {
+        if (free_it.pa() != CONSOLE_ADDR && free_it.present() && free_it.user()) {
+            kfree(free_it.kptr());
+        }
+        free_it += PAGESIZE;
+    }
+
+    for (ptiter it(ptable[pid].pagetable); it.va() < MEMSIZE_VIRTUAL; it.next()) {
+        kfree(it.kptr());
+    }
+    ptable[pid].state = P_FREE;
+    kfree((void*)ptable[pid].pagetable);
+}
+
+// syscall_page_alloc(addr)
+//    Handles the SYSCALL_PAGE_ALLOC system call. This function
+//    should implement the specification for `sys_page_alloc`
+//    in `u-lib.hh` (but in the handout code, it does not).
+
+int syscall_page_alloc(uintptr_t addr) {
+    // Meets requiremetns in u-lib.hh
+    if (addr % 4096 == 0 && addr >= PROC_START_ADDR && addr < MEMSIZE_VIRTUAL) {
+        void *kalloc_mem = kalloc(PAGESIZE);
+
+        // Check if out of physical memory
+        if (kalloc_mem == nullptr) {
+            return -1;
+        }
+
+        int test = vmiter(ptable[current->pid].pagetable, addr).try_map(kalloc_mem, PTE_P | PTE_U | PTE_W);
+        if (test < 0) {
+            kfree(kalloc_mem);
+            return -1;
+        }
+        // assert(physpages[addr / PAGESIZE].refcount == 0);
+        // ++physpages[addr / PAGESIZE].refcount;
+        memset((void*) kalloc_mem, 0, PAGESIZE);
+        return 0;
+    }
+    else {
+        return -1;
+    }
+    
+}
+
+pid_t syscall_fork() {
+    for (pid_t i = 1; i < NPROC; ++i) {
+        if (ptable[i].state == P_FREE){
+            pid_t proc_num = i;
+            // ptable[proc_num].pid = proc_num;
+            
+            ptable[proc_num].pagetable = kalloc_pagetable();
+            if (ptable[proc_num].pagetable == nullptr) {
+                kfree(ptable[proc_num].pagetable);
+                return -1;
+            }
+
+            vmiter parent(ptable[current->pid].pagetable, 0);
+            vmiter child(ptable[proc_num].pagetable, 0);
+
+            while (parent.va() < MEMSIZE_VIRTUAL) {
+                if (parent.present()) {
+                    if (parent.va() < PROC_START_ADDR) {
+                        int test = child.try_map(parent.pa(), parent.perm());
+                        if (test < 0) {
+                            syscall_exit(proc_num);
+                            return -1;
+                        }
+                    }
+
+                    if (!parent.writable() && parent.user()) {
+                        child.map(parent.pa(), parent.perm());
+                        // if (test < 0) {
+                        //     syscall_exit(proc_num);
+                        //     return -1;
+                        // }
+                        ++physpages[parent.pa() / PAGESIZE].refcount;
+                    }
+
+                    else if (parent.va() != CONSOLE_ADDR && parent.writable() && parent.user()) {
+                        void* new_page = kalloc(PAGESIZE);
+                        if (new_page == nullptr) {
+                            syscall_exit(proc_num);
+                            return -1;
+                        }
+                        int test = child.try_map(new_page, parent.perm());
+                        if (test < 0) {
+                            kfree(new_page);
+                            syscall_exit(proc_num);
+                            return -1;
+                        }
+                        memcpy(new_page, (const void*) parent.pa(), PAGESIZE);
+                    }
+
+                    
+                }
+                parent += PAGESIZE;
+                child += PAGESIZE; 
+            }
+            ptable[proc_num].regs = current->regs;
+            ptable[proc_num].regs.reg_rax = 0;
+            ptable[proc_num].state = P_RUNNABLE;
+            return proc_num;
+        }
+    }
+    return -1;
+}
+
 uintptr_t syscall(regstate* regs) {
     // Copy the saved registers into the `current` process descriptor.
     current->regs = *regs;
@@ -295,6 +434,9 @@ uintptr_t syscall(regstate* regs) {
     // Actually handle the exception.
     switch (regs->reg_rax) {
 
+
+
+
     case SYSCALL_PANIC:
         user_panic(current);    // does not return
 
@@ -304,6 +446,14 @@ uintptr_t syscall(regstate* regs) {
     case SYSCALL_YIELD:
         current->regs.reg_rax = 0;
         schedule();             // does not return
+
+    // Implement fork
+    case SYSCALL_FORK:
+        return syscall_fork();
+
+    case SYSCALL_EXIT:
+        syscall_exit(current->pid);
+        schedule();
 
     case SYSCALL_PAGE_ALLOC:
         return syscall_page_alloc(current->regs.reg_rdi);
@@ -316,18 +466,6 @@ uintptr_t syscall(regstate* regs) {
     panic("Should not get here!\n");
 }
 
-
-// syscall_page_alloc(addr)
-//    Handles the SYSCALL_PAGE_ALLOC system call. This function
-//    should implement the specification for `sys_page_alloc`
-//    in `u-lib.hh` (but in the handout code, it does not).
-
-int syscall_page_alloc(uintptr_t addr) {
-    assert(physpages[addr / PAGESIZE].refcount == 0);
-    ++physpages[addr / PAGESIZE].refcount;
-    memset((void*) addr, 0, PAGESIZE);
-    return 0;
-}
 
 
 // schedule
