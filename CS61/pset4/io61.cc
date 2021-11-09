@@ -13,7 +13,8 @@
 
 struct io61_file {
     int fd;
-
+    // Create cache
+    char cache[4096]; 
     // Cache tags from section
     off_t tag;      
     off_t end_tag; 
@@ -67,7 +68,21 @@ int io61_readc(io61_file* f) {
 //    could be read. Returns -1 if an error occurred before any characters
 //    were read.
 
+// Use this to prefetch and fill cache
+int io61_fill(io61_file* f) {
+    // Clear cache
+    f->tag = f->pos_tag = f->end_tag;
+    // Declare variable to hold "read" return value
+    size_t bytes_read;
+    bytes_read = read(f->fd, f->cache, 4096);
+    if (bytes_read != 0) {
+        f->end_tag = (f->tag + bytes_read); 
+    }
+    return bytes_read;
+}
+
 ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
+
     size_t nread = 0;
     // while (nread != sz) {
     //     int ch = read(f->fd, buf, sz);
@@ -78,13 +93,38 @@ ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
     //     ++nread;
     // }
     // return nread;
-    nread = read(f->fd, buf, sz);
-    if (nread == -1) {
-        return -1;
+    // nread = read(f->fd, buf, sz);
+    // if (nread == -1) {
+    //     return -1;
+    // }
+    // else {
+    //     return nread;
+    // }
+
+    // Keep track of bytes read to increment pos_tag
+    size_t bytes_read = 0;
+    io61_fill(f);
+    if (sz <= 4096) {
+        memcpy(&buf[bytes_read], &f->cache, sz);
+        bytes_read += sz;
+        return bytes_read;
     }
     else {
-        return nread;
+        int bytes_left = sz;
+        while (bytes_left >= 4096) {
+            memcpy(&buf[bytes_read], &f->cache, 4096);
+            bytes_left -= 4096;
+            bytes_read += 4096;
+            io61_fill(f);
+        }
+        if (bytes_left != 0) {
+            f->pos_tag = bytes_left;
+            memcpy(&buf[bytes_read], &f->cache[f->pos_tag], bytes_left);
+            bytes_read += bytes_left;
+        }
+        return bytes_read;
     }
+
 
     // Note: This function never returns -1 because `io61_readc`
     // does not distinguish between error and end-of-file.
