@@ -19,6 +19,8 @@ struct io61_file {
     off_t tag;      
     off_t end_tag; 
     off_t pos_tag;
+    // Size of cache
+    int cache_size = 4096;
 };
 
 
@@ -83,7 +85,7 @@ int io61_fill(io61_file* f) {
 
 ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
 
-    size_t nread = 0;
+    // size_t nread = 0;
     // while (nread != sz) {
     //     int ch = read(f->fd, buf, sz);
     //     if (ch == EOF) {
@@ -103,26 +105,29 @@ ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
 
     // Keep track of bytes read to increment pos_tag
     size_t bytes_read = 0;
-    io61_fill(f);
-    if (sz <= 4096) {
+    check = io61_fill(f);
+    if (f->pos_tag == f->end_tag) {
+        return bytes_read;
+    }
+    if (sz <= fd->cache_size) {
         memcpy(&buf[bytes_read], &f->cache, sz);
         bytes_read += sz;
         return bytes_read;
     }
     else {
         int bytes_left = sz;
-        while (bytes_left >= 4096) {
-            memcpy(&buf[bytes_read], &f->cache, 4096);
-            bytes_left -= 4096;
-            bytes_read += 4096;
+        while (bytes_left >= fd->cache_size) {
+            memcpy(&buf[bytes_read], &f->cache, fd->cache_size);
+            bytes_left -= fd->cache_size;
+            bytes_read += fd->cache_size;
             io61_fill(f);
+            if (f->pos_tag == f->end_tag) {
+                return bytes_read;
+            }
         }
-        if (bytes_left != 0) {
-            f->pos_tag = bytes_left;
-            memcpy(&buf[bytes_read], &f->cache[f->pos_tag], bytes_left);
-            bytes_read += bytes_left;
-        }
-        return bytes_read;
+        memcpy(&buf[bytes_read], &f->cache, bytes_left);
+        pos_tag += bytes_left;
+        bytes_read += bytes_left;
     }
 
 
