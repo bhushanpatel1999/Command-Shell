@@ -182,14 +182,14 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
     //     return nwritten;
     // }
 
-    assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
-    assert(f->end_tag - f->pos_tag <= f->cache_size);
+    // assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
+    // assert(f->end_tag - f->pos_tag <= f->cache_size);
 
-    // Write cache invariant.
-    assert(f->pos_tag == f->end_tag);
+    // // Write cache invariant.
+    // assert(f->pos_tag == f->end_tag);
 
-    // The desired data is guaranteed to lie within this cache slot.
-    assert(sz <= f->cache_size && f->pos_tag + sz <= f->tag + f->cache_size);
+    // // The desired data is guaranteed to lie within this cache slot.
+    // assert(sz <= f->cache_size && f->pos_tag + sz <= f->tag + f->cache_size);
 
     /* ANSWER */
     memcpy(&f->cache[f->pos_tag - f->tag], buf, sz);
@@ -205,11 +205,11 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
 //    data buffered for reading, or do nothing.
 
 int io61_flush(io61_file* f) {
-    assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
-    assert(f->end_tag - f->pos_tag <= f->cache_size);
+    // assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
+    // assert(f->end_tag - f->pos_tag <= f->cache_size);
 
-    // Write cache invariant.
-    assert(f->pos_tag == f->end_tag);
+    // // Write cache invariant.
+    // assert(f->pos_tag == f->end_tag);
 
     /* ANSWER */
     ssize_t n = write(f->fd, f->cache, f->pos_tag - f->tag);
