@@ -13,6 +13,11 @@
 
 struct io61_file {
     int fd;
+
+    // Cache tags from section
+    off_t tag;      
+    off_t end_tag; 
+    off_t pos_tag;
 };
 
 
@@ -64,15 +69,22 @@ int io61_readc(io61_file* f) {
 
 ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
     size_t nread = 0;
-    while (nread != sz) {
-        int ch = io61_readc(f);
-        if (ch == EOF) {
-            break;
-        }
-        buf[nread] = ch;
-        ++nread;
+    // while (nread != sz) {
+    //     int ch = read(f->fd, buf, sz);
+    //     if (ch == EOF) {
+    //         break;
+    //     }
+    //     buf[nread] = ch;
+    //     ++nread;
+    // }
+    // return nread;
+    nread = read(f->fd, buf, sz);
+    if (nread == -1) {
+        return -1;
     }
-    return nread;
+    else {
+        return nread;
+    }
 
     // Note: This function never returns -1 because `io61_readc`
     // does not distinguish between error and end-of-file.
@@ -103,16 +115,23 @@ int io61_writec(io61_file* f, int ch) {
 
 ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
     size_t nwritten = 0;
-    while (nwritten != sz) {
-        if (io61_writec(f, buf[nwritten]) == -1) {
-            break;
-        }
-        ++nwritten;
-    }
-    if (nwritten != 0 || sz == 0) {
-        return nwritten;
-    } else {
+    // while (nwritten != sz) {
+    //     if (write(f->fd, buf, sz) == -1) {
+    //         break;
+    //     }
+    //     ++nwritten;
+    // }
+    // if (nwritten != 0 || sz == 0) {
+    //     return nwritten;
+    // } else {
+    //     return -1;
+    // }
+    nwritten = write(f->fd, buf, sz);
+    if (nwritten == -1) {
         return -1;
+    }
+    else {
+        return nwritten;
     }
 }
 
