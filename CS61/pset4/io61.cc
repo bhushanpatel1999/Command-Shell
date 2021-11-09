@@ -128,6 +128,7 @@ ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
         memcpy(&buf[bytes_read], &f->cache, bytes_left);
         f->pos_tag += bytes_left;
         bytes_read += bytes_left;
+        return bytes_read;
     }
 
 
