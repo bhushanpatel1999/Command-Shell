@@ -160,7 +160,7 @@ int io61_writec(io61_file* f, int ch) {
 //    an error occurred before any characters were written.
 
 ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
-    size_t nwritten = 0;
+    // size_t nwritten = 0;
     // while (nwritten != sz) {
     //     if (write(f->fd, buf, sz) == -1) {
     //         break;
@@ -172,13 +172,30 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
     // } else {
     //     return -1;
     // }
-    nwritten = write(f->fd, buf, sz);
-    if (nwritten == -1) {
-        return -1;
-    }
-    else {
-        return nwritten;
-    }
+
+
+    // nwritten = write(f->fd, buf, sz);
+    // if (nwritten == -1) {
+    //     return -1;
+    // }
+    // else {
+    //     return nwritten;
+    // }
+
+    assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
+    assert(f->end_tag - f->pos_tag <= f->bufsize);
+
+    // Write cache invariant.
+    assert(f->pos_tag == f->end_tag);
+
+    // The desired data is guaranteed to lie within this cache slot.
+    assert(sz <= f->bufsize && f->pos_tag + sz <= f->tag + f->bufsize);
+
+    /* ANSWER */
+    memcpy(&f->cbuf[f->pos_tag - f->tag], buf, sz);
+    f->pos_tag += sz;
+    f->end_tag += sz;
+    return sz;
 }
 
 
