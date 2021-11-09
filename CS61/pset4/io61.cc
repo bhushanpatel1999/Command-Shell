@@ -105,28 +105,28 @@ ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
 
     // Keep track of bytes read to increment pos_tag
     size_t bytes_read = 0;
-    check = io61_fill(f);
+    io61_fill(f);
     if (f->pos_tag == f->end_tag) {
         return bytes_read;
     }
-    if (sz <= fd->cache_size) {
+    if (sz <= f->cache_size) {
         memcpy(&buf[bytes_read], &f->cache, sz);
         bytes_read += sz;
         return bytes_read;
     }
     else {
         int bytes_left = sz;
-        while (bytes_left >= fd->cache_size) {
-            memcpy(&buf[bytes_read], &f->cache, fd->cache_size);
-            bytes_left -= fd->cache_size;
-            bytes_read += fd->cache_size;
+        while (bytes_left >= f->cache_size) {
+            memcpy(&buf[bytes_read], &f->cache, f->cache_size);
+            bytes_left -= f->cache_size;
+            bytes_read += f->cache_size;
             io61_fill(f);
             if (f->pos_tag == f->end_tag) {
                 return bytes_read;
             }
         }
         memcpy(&buf[bytes_read], &f->cache, bytes_left);
-        pos_tag += bytes_left;
+        f->pos_tag += bytes_left;
         bytes_read += bytes_left;
     }
 
