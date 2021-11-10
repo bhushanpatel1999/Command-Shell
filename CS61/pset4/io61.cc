@@ -108,10 +108,13 @@ ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
     while (bytes_read < sz) {
         // Check if cache is even filled. If not, fill it
         if (f->pos_tag == f->end_tag) {
-            io61_fill(f);
+            int check = io61_fill(f);
             // Check to see if it was filled. If not, you're at EOF so exit
-            if (f->pos_tag == f->end_tag) {
+            if (check == 0) {
                 break;
+            }
+            if (check == -1) {
+                return -1;
             }
         }
         // Declare variable to track how many bytes to memcpy
@@ -127,7 +130,7 @@ ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
         }
 
         // Use memcpy to copy count_bytes from cache
-        memcpy(&buf[bytes_read], &f->cache[f->end_tag - f->pos_tag], count_bytes);
+        memcpy(&buf[bytes_read], &f->cache[f->pos_tag - f->tag], count_bytes);
         // Increment by # of bytes copied
         bytes_read += count_bytes;
         // Increment pos_tag 
@@ -238,11 +241,11 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
         // Declare variable to track how many bytes to memcpy
         int count_bytes;
         // Similar minimum logic as io61_read
-        if ( (sz - bytes_written) < (f->cache_size - f->pos_tag) ) {
+        if ( (sz - bytes_written) < (f->tag + f->cache_size - f->pos_tag) ) {
             count_bytes = sz - bytes_written;
         }
         else {
-            count_bytes = f->cache_size - f->pos_tag;
+            count_bytes = f->tag + f->cache_size - f->pos_tag;
         }
 
         // Use memcpy to write count_bytes to cache
