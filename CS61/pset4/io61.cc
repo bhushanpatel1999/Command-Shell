@@ -269,8 +269,9 @@ int io61_flush(io61_file* f) {
     // }
     
     ssize_t n = write(f->fd, f->cache, f->pos_tag - f->tag);
-    assert((size_t) n == f->pos_tag - f->tag);
+    // assert((size_t) n == f->pos_tag - f->tag);
     f->tag = f->pos_tag;
+    return n;
 }
 
 
