@@ -75,7 +75,7 @@ int io61_fill(io61_file* f) {
     // Clear cache
     f->tag = f->pos_tag = f->end_tag;
     // Declare variable to hold "read" return value
-    size_t bytes_read;
+    int bytes_read;
     bytes_read = read(f->fd, f->cache, 4096);
     if (bytes_read != 0) {
         f->end_tag = (f->tag + bytes_read); 
@@ -103,33 +103,65 @@ ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
     //     return nread;
     // }
 
-    // Keep track of bytes read to increment pos_tag
-    size_t bytes_read = 0;
-    io61_fill(f);
-    if (f->pos_tag == f->end_tag) {
-        return bytes_read;
-    }
-    if (sz <= f->cache_size) {
-        memcpy(&buf[bytes_read], &f->cache, sz);
-        bytes_read += sz;
-        return bytes_read;
-    }
-    else {
-        int bytes_left = sz;
-        while (bytes_left >= f->cache_size) {
-            memcpy(&buf[bytes_read], &f->cache, f->cache_size);
-            bytes_left -= f->cache_size;
-            bytes_read += f->cache_size;
+    // Keep track of bytes read to buffer
+    int bytes_read = 0;
+    while (bytes_read < sz) {
+        // Check if cache is even filled. If not, fill it
+        if (f->pos_tag == f->end_tag) {
             io61_fill(f);
+            // Check to see if it was filed. If not, you're at EOF so exit
             if (f->pos_tag == f->end_tag) {
-                return bytes_read;
+                break;
             }
         }
-        memcpy(&buf[bytes_read], &f->cache, bytes_left);
-        f->pos_tag += bytes_left;
-        bytes_read += bytes_left;
-        return bytes_read;
+        // Declare variable to track how many bytes to memcpy
+        int count_bytes;
+        // According to Ed #936, bytes left to read can be smaller than "sz" if the file
+        // is smaller than "sz" (like in blockcat), so must check the minimum 
+        // of (cache size and bytes left to read)
+        if ( (sz - bytes_read) < (f->end_tag - f->pos_tag) ) {
+            count_bytes = sz - bytes_read;
+        }
+        else {
+            count_bytes = f->end_tag - f->pos_tag;
+        }
+
+        // Use memcpy to copy count_bytes from cache
+        memcpy(&buf[bytes_read], &f->cache[f->end_tag - f->pos_tag], count_bytes);
+        // Increment by # of bytes copied
+        bytes_read += count_bytes;
+        // Increment pos_tag so the if-statement at the 
+        f->pos_tag += count_bytes;
     }
+    return bytes_read;
+    
+
+    // if (f->pos_tag == f->end_tag) {
+    //     return bytes_read;
+    // }
+    // if (sz <= f->cache_size) {
+    //     memcpy(buf[bytes_read], &f->cache, sz);
+    //     f->pos_tag += sz;
+    //     bytes_read += sz;
+    //     return bytes_read;
+    // }
+    // else {
+    //     int bytes_left = sz;
+    //     while (bytes_left >= f->cache_size) {
+    //         memcpy(buf[bytes_read], &f->cache, f->cache_size);
+    //         f->pos_tag += f->cache_size;
+    //         bytes_left -= f->cache_size;
+    //         bytes_read += f->cache_size;
+    //         io61_fill(f);
+    //         if (f->pos_tag == f->end_tag) {
+    //             return bytes_read;
+    //         }
+    //     }
+    //     memcpy(buf[bytes_read], &f->cache, bytes_left);
+    //     f->pos_tag += bytes_left;
+    //     bytes_read += bytes_left;
+    //     return bytes_read;
+    // }
 
 
     // Note: This function never returns -1 because `io61_readc`
@@ -192,6 +224,7 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
     // assert(sz <= f->cache_size && f->pos_tag + sz <= f->tag + f->cache_size);
 
     /* ANSWER */
+    size_t bytes_read;
     memcpy(&f->cache[f->pos_tag - f->tag], buf, sz);
     f->pos_tag += sz;
     f->end_tag += sz;
@@ -212,9 +245,9 @@ int io61_flush(io61_file* f) {
     // assert(f->pos_tag == f->end_tag);
 
     /* ANSWER */
-    ssize_t n = write(f->fd, f->cache, f->pos_tag - f->tag);
-    assert((size_t) n == f->pos_tag - f->tag);
+    int bytes_written = write(f->fd, f->cache, f->pos_tag - f->tag);
     f->tag = f->pos_tag;
+    return bytes_written;
 }
 
 
