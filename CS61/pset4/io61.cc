@@ -225,10 +225,14 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
     while (bytes_written < sz) {
         // Check if cache filled. If so, flush it
         if (f->pos_tag == f->tag + f->cache_size) {
-            io61_flush(f);
-            // Check to see if it was flushed. If not, youre at EOF so can't write.
-            if (f->pos_tag == f->tag + f->cache_size) {
+            check = io61_flush(f);
+            // Check can be 0, -1, or 4096 if successful. So check for first two cases
+            if (check == 0) {
+                // At EOF so no bytes written
                 return bytes_written;
+            }
+            if (check == -1) {
+                return check;
             }
         }
         // Declare variable to track how many bytes to memcpy
@@ -269,9 +273,8 @@ int io61_flush(io61_file* f) {
     // }
     
     ssize_t n = write(f->fd, f->cache, f->pos_tag - f->tag);
-    // assert((size_t) n == f->pos_tag - f->tag);
+    assert((size_t) n == f->pos_tag - f->tag);
     f->tag = f->pos_tag;
-    return n;
 }
 
 
