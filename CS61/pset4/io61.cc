@@ -254,7 +254,7 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
         bytes_written += count_bytes;
         // Increment pos_tag 
         f->pos_tag += count_bytes;
-        f->end_tag = f->pos_tag;
+        f->end_tag += count_bytes;
     }
     return bytes_written;
 
