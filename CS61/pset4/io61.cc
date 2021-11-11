@@ -269,7 +269,7 @@ int io61_flush(io61_file* f) {
     // }
     
     ssize_t n = write(f->fd, f->cache, f->pos_tag - f->tag);
-    printf("%d\n", (int)n);
+    // printf("%d\n", (int)n);
     if (n == -1) {
         return -1;
     }
