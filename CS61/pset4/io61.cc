@@ -222,29 +222,35 @@ int io61_flush(io61_file* f) {
 //    Returns 0 on success and -1 on failure.
 
 int io61_seek(io61_file* f, off_t pos) {
-    int align = pos;
-    // Read-caches only are aligned
-    if (f->mode == O_RDONLY)
-    {
-        // Align to closest, lower 4096-divisible position
-        int leftover = pos % f->cache_size;
-        align -= leftover;
-    }
-    else
-    {
-        io61_flush(f);
-    }
+    // int align = pos;
+    // // Read-caches only are aligned
+    // if (f->mode == O_RDONLY)
+    // {
+    //     // Align to closest, lower 4096-divisible position
+    //     int leftover = pos % f->cache_size;
+    //     align -= leftover;
+    // }
+    // else
+    // {
+    //     io61_flush(f);
+    // }
 
-    if (lseek(f->fd, (off_t)align, SEEK_SET) == align)
-    {
-        f->tag = f->end_tag = align;
-        if (f->mode == O_RDONLY)
-        {
-            io61_fill(f);
-        }
-        f->pos_tag = pos;
+    // if (lseek(f->fd, (off_t)align, SEEK_SET) == align)
+    // {
+    //     f->tag = f->end_tag = align;
+    //     if (f->mode == O_RDONLY)
+    //     {
+    //         io61_fill(f);
+    //     }
+    //     f->pos_tag = pos;
+    // }
+    // return 0;
+    off_t r = lseek(f->fd, (off_t) pos, SEEK_SET);
+    if (r == (off_t) pos) {
+        return 0;
+    } else {
+        return -1;
     }
-    return 0;
 }
 
 
