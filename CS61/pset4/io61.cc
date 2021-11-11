@@ -13,14 +13,14 @@
 
 struct io61_file {
     int fd;
+    // Size of cache
+    static constexpr off_t cache_size = 4096;
     // Create cache
-    char cache[4096]; 
+    unsigned char cache[cache_size]; 
     // Cache tags from section
     off_t tag;      
     off_t end_tag; 
     off_t pos_tag;
-    // Size of cache
-    int cache_size = 4096;
 };
 
 
@@ -55,7 +55,7 @@ int io61_close(io61_file* f) {
 
 int io61_readc(io61_file* f) {
     unsigned char buf[1];
-    if (read(f->fd, buf, 1) == 1) {
+    if (io61_read(f, buf, 1) == 1) {
         return buf[0];
     } else {
         return EOF;
@@ -83,26 +83,13 @@ int io61_fill(io61_file* f) {
     return bytes_read;
 }
 
+
+
 ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
 
-    // size_t nread = 0;
-    // while (nread != sz) {
-    //     int ch = read(f->fd, buf, sz);
-    //     if (ch == EOF) {
-    //         break;
-    //     }
-    //     buf[nread] = ch;
-    //     ++nread;
-    // }
-    // return nread;
-    // nread = read(f->fd, buf, sz);
-    // if (nread == -1) {
-    //     return -1;
-    // }
-    // else {
-    //     return nread;
-    // }
-
+    assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
+    assert(f->end_tag - f->pos_tag <= f->cache_size);
+ 
     // Keep track of bytes read to buffer
     int bytes_read = 0;
     while (bytes_read < sz) {
@@ -138,8 +125,6 @@ ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
     }
     return bytes_read;
     
-    // assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
-    // assert(f->end_tag - f->pos_tag <= f->cache_size);
 
     // /* ANSWER */
     // size_t pos = 0;
@@ -173,7 +158,7 @@ ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
 int io61_writec(io61_file* f, int ch) {
     unsigned char buf[1];
     buf[0] = ch;
-    if (write(f->fd, buf, 1) == 1) {
+    if (io61_write(f, buf, 1) == 1) {
         return 0;
     } else {
         return -1;
@@ -201,13 +186,21 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
     // }
 
 
-    // // Check invariants.
+    // Check invariants.
     // assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
     // assert(f->end_tag - f->pos_tag <= f->cache_size);
 
     // // Write cache invariant.
     // assert(f->pos_tag == f->end_tag);
 
+    // Check invariants.
+    assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
+    assert(f->end_tag - f->pos_tag <= f->cache_size);
+
+    // Write cache invariant.
+    assert(f->pos_tag == f->end_tag);
+
+    // /* ANSWER */
     // size_t pos = 0;
     // while (pos < sz) {
     //     if (f->end_tag == f->tag + f->cache_size) {
@@ -276,6 +269,10 @@ int io61_flush(io61_file* f) {
     // }
     
     ssize_t n = write(f->fd, f->cache, f->pos_tag - f->tag);
+    printf("%d\n", (int)n);
+    if (n == -1) {
+        return -1;
+    }
     assert((size_t) n == f->pos_tag - f->tag);
     f->tag = f->pos_tag;
     return 0;
