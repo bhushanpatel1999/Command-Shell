@@ -21,8 +21,9 @@ struct io61_file {
     off_t tag;      
     off_t end_tag; 
     off_t pos_tag;
+    // Mode of file
+    int mode = 0;
 };
-
 
 // io61_fdopen(fd, mode)
 //    Return a new io61_file for file descriptor `fd`. `mode` is
@@ -87,6 +88,7 @@ int io61_fill(io61_file* f) {
 
 ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
 
+    // Check invariants
     assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
     assert(f->end_tag - f->pos_tag <= f->cache_size);
  
@@ -124,25 +126,6 @@ ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
         f->pos_tag += count_bytes;
     }
     return bytes_read;
-    
-
-    // /* ANSWER */
-    // size_t pos = 0;
-    // while (pos < sz) {
-    //     if (f->pos_tag == f->end_tag) {
-    //         io61_fill(f);
-    //         if (f->pos_tag == f->end_tag) {
-    //             break;
-    //         }
-    //     }
-
-    //     // This would be faster if you used `memcpy`!
-    //     buf[pos] = f->cache[f->pos_tag - f->tag];
-    //     ++f->pos_tag;
-    //     ++pos;
-    // }
-    // return pos;
-
 
     // Note: This function never returns -1 because `io61_readc`
     // does not distinguish between error and end-of-file.
@@ -172,26 +155,6 @@ int io61_writec(io61_file* f, int ch) {
 //    an error occurred before any characters were written.
 
 ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
-    // size_t nwritten = 0;
-    // while (nwritten != sz) {
-    //     if (write(f->fd, buf, sz) == -1) {
-    //         break;
-    //     }
-    //     ++nwritten;
-    // }
-    // if (nwritten != 0 || sz == 0) {
-    //     return nwritten;
-    // } else {
-    //     return -1;
-    // }
-
-
-    // Check invariants.
-    // assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
-    // assert(f->end_tag - f->pos_tag <= f->cache_size);
-
-    // // Write cache invariant.
-    // assert(f->pos_tag == f->end_tag);
 
     // Check invariants.
     assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
@@ -200,23 +163,6 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
     // Write cache invariant.
     assert(f->pos_tag == f->end_tag);
 
-    // /* ANSWER */
-    // size_t pos = 0;
-    // while (pos < sz) {
-    //     if (f->end_tag == f->tag + f->cache_size) {
-    //         io61_flush(f);
-    //     }
-
-    //     // This would be faster if you used `memcpy`!
-    //     f->cache[f->pos_tag - f->tag] = buf[pos];
-    //     ++f->pos_tag;
-    //     ++f->end_tag;
-    //     ++pos;
-    // }
-    // return pos;
-
-    // Very similar logic to io61_read
-    // Keep track of bytes_written
     int bytes_written = 0;
     while (bytes_written < sz) {
         // Check if cache filled. If so, flush it
@@ -250,7 +196,6 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
         f->end_tag += count_bytes;
     }
     return bytes_written;
-
 }
 
 
@@ -260,13 +205,6 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
 //    data buffered for reading, or do nothing.
 
 int io61_flush(io61_file* f) {
-
-    // Keep track of bytes_written
-    // bytes_written = write(f->fd, f->cache, f->pos_tag - f->tag);
-    // if (bytes_written != -1) {
-    //     // Write was a success so change tags to reflect that
-    //     f->tag = f->pos_tag;
-    // }
     
     ssize_t n = write(f->fd, f->cache, f->pos_tag - f->tag);
     // printf("%d\n", (int)n);
@@ -284,12 +222,29 @@ int io61_flush(io61_file* f) {
 //    Returns 0 on success and -1 on failure.
 
 int io61_seek(io61_file* f, off_t pos) {
-    off_t r = lseek(f->fd, (off_t) pos, SEEK_SET);
-    if (r == (off_t) pos) {
-        return 0;
-    } else {
-        return -1;
+    int align = pos;
+    // Read-caches only are aligned
+    if (f->mode == O_RDONLY)
+    {
+        // Align to closest, lower 4096-divisible position
+        int leftover = pos % f->cache_size;
+        align -= leftover;
     }
+    else
+    {
+        io61_flush(f);
+    }
+
+    if (lseek(f->fd, (off_t)align, SEEK_SET) == align)
+    {
+        f->tag = f->end_tag = aligned_pos;
+        if (f->mode == O_RDONLY)
+        {
+            io61_fill(f);
+        }
+        f->pos_tag = pos;
+    }
+    return 0;
 }
 
 
