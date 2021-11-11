@@ -237,7 +237,7 @@ int io61_seek(io61_file* f, off_t pos) {
 
     if (lseek(f->fd, (off_t)align, SEEK_SET) == align)
     {
-        f->tag = f->end_tag = aligned_pos;
+        f->tag = f->end_tag = align;
         if (f->mode == O_RDONLY)
         {
             io61_fill(f);
