@@ -4,24 +4,23 @@
 #include <climits>
 #include <cerrno>
 
-// io61.c
-//    YOUR CODE HERE!
 
 
 // io61_file
 //    Data structure for io61 file wrappers. Add your own stuff.
 
 struct io61_file {
+    // File descriptor
     int fd;
     // Size of cache
-    static constexpr off_t cache_size = 4096;
+    static constexpr off_t cache_size = 8192;
     // Create cache
     unsigned char cache[cache_size]; 
     // Cache tags from section
     off_t tag;      
     off_t end_tag; 
     off_t pos_tag;
-    // Mode of file
+    // Mode of file (read or write)
     int mode;
 };
 
@@ -34,7 +33,9 @@ io61_file* io61_fdopen(int fd, int mode) {
     assert(fd >= 0);
     io61_file* f = new io61_file;
     f->fd = fd;
+    // Add mode to struct to mark file 
     f->mode = mode;
+    // Reset
     f->tag = 0;
     f->end_tag = 0;
     f->pos_tag = 0;
