@@ -227,10 +227,10 @@ int io61_seek(io61_file* f, off_t pos) {
     if (f->mode == O_RDONLY)
     {
         // Align to closest, lower 4096-divisible position
-        int leftover = pos % f->cache_size;
+        size_t leftover = pos % f->cache_size;
         align -= leftover;
     }
-    else
+    else if (f->mode == O_WRONLY)
     {
         io61_flush(f);
     }
