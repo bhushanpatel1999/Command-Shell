@@ -211,9 +211,9 @@ int io61_flush(io61_file* f) {
     if (n == -1) {
         return -1;
     }
-    assert((size_t) n == f->pos_tag - f->tag);
+    //assert((size_t) n == f->pos_tag - f->tag);
     f->tag = f->pos_tag;
-    return 0;
+    return n;
 }
 
 
