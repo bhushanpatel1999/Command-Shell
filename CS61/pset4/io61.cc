@@ -4,7 +4,6 @@
 #include <climits>
 #include <cerrno>
 
-// io61_file
 // Data structure for io61 file wrappers. Add your own stuff.
 
 struct io61_file {
