@@ -61,6 +61,7 @@ int main(int argc, char* argv[]) {
         --nblocks;
 
         // Transfer that block
+        // fprintf(stderr, "pos: %ld\n", pos);
         io61_seek(inf, pos);
         ssize_t amount = io61_read(inf, buf, block_size);
         if (amount <= 0) {

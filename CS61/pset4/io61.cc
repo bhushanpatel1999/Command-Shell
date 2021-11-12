@@ -77,7 +77,7 @@ int io61_fill(io61_file* f) {
     f->tag = f->pos_tag = f->end_tag;
     // Declare variable to hold "read" return value
     int bytes_read;
-    bytes_read = read(f->fd, f->cache, 4096);
+    bytes_read = read(f->fd, f->cache, f->cache_size);
     if (bytes_read != 0) {
         f->end_tag = (f->tag + bytes_read); 
     }
@@ -156,10 +156,10 @@ int io61_writec(io61_file* f, int ch) {
 
 ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
 
-    // Check invariants.
+    //Check invariants.
     assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
     assert(f->end_tag - f->pos_tag <= f->cache_size);
-
+    fprintf(stderr, "Got here at least once");
     // Write cache invariant.
     assert(f->pos_tag == f->end_tag);
 
@@ -176,6 +176,7 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
             // if (check == -1) {
             //     return -1;
             // }
+    
         }
         // Declare variable to track how many bytes to memcpy
         int count_bytes;
@@ -192,8 +193,8 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
         // Increment by # of bytes copied
         bytes_written += count_bytes;
         // Increment pos_tag 
-        f->pos_tag += count_bytes;
-        f->end_tag += count_bytes;
+        f->end_tag = f->pos_tag += count_bytes;
+        // f->end_tag = f->pos_tag;
     }
     return bytes_written;
 }
@@ -240,10 +241,14 @@ int io61_seek(io61_file* f, off_t pos) {
         return 0;
     }
 
-    int loc = lseek(f->fd, (off_t) align, SEEK_SET);
+    size_t loc = lseek(f->fd, (off_t) align, SEEK_SET);
     if (loc == (int) align)
     {
-        f->tag = f->end_tag = (off_t) align;
+        if (f->mode == O_WRONLY)
+            {
+                io61_flush(f);
+            }
+        f->tag = f->end_tag = align;
         if (f->mode == O_RDONLY)
         {
             io61_fill(f);
