@@ -221,15 +221,15 @@ int io61_flush(io61_file* f) {
 int io61_seek(io61_file* f, off_t pos) {
     size_t align = pos;
     // Read-caches only are aligned
-    if (f->mode == O_RDONLY)
+    if (f->mode == O_WRONLY)
+    {
+        io61_flush(f);
+    }
+    else
     {
         // Align to closest, lower 4096-divisible position
         size_t leftover = pos % f->cache_size;
         align -= leftover;
-    }
-    else
-    {
-        io61_flush(f);
     }
 
     if ((size_t)f->tag == align) {
@@ -239,10 +239,6 @@ int io61_seek(io61_file* f, off_t pos) {
 
     if (lseek(f->fd, (off_t) align, SEEK_SET) == (int) align)
     {
-        if (f->mode == O_WRONLY)
-            {
-                io61_flush(f);
-            }
         f->tag = f->end_tag = align;
         if (f->mode == O_RDONLY)
         {
