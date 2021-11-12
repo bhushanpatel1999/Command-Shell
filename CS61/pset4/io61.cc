@@ -75,21 +75,16 @@ int io61_readc(io61_file* f) {
 //    were read.
 
 // Use this to prefetch and fill cache
-void io61_fill(io61_file* f) {
+int io61_fill(io61_file* f) {
     // Clear cache
-    if (f->mode == O_RDONLY) {
-        f->tag = f->pos_tag = f->end_tag;
-        // Declare variable to hold "read" return value
-        int bytes_read;
-        bytes_read = read(f->fd, f->cache, f->cache_size);
-        if (bytes_read >= 0) {
-            f->end_tag = (f->tag + bytes_read); 
-        }
-        return;
+    f->tag = f->pos_tag = f->end_tag;
+    // Declare variable to hold "read" return value
+    int bytes_read;
+    bytes_read = read(f->fd, f->cache, f->cache_size);
+    if (bytes_read >= 0) {
+        f->end_tag = (f->tag + (off_t) bytes_read); 
     }
-    else {
-        return;
-    }
+    return bytes_read;
 }
 
 
@@ -105,14 +100,14 @@ ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
     while (bytes_read < sz) {
         // Check if cache is even filled. If not, fill it
         if (f->pos_tag == f->end_tag) {
-            io61_fill(f);
+            int check = io61_fill(f);
             // Check to see if it was filled. If not, you're at EOF so exit
-            // if (check == 0) {
-            //     break;
-            // }
-            // if (check == -1) {
-            //     return -1;
-            // }
+            if (check == 0) {
+                break;
+            }
+            if (check == -1) {
+                return -1;
+            }
         }
         // Declare variable to track how many bytes to memcpy
         int count_bytes;
@@ -213,16 +208,15 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
 //    data buffered for reading, or do nothing.
 
 int io61_flush(io61_file* f) {
-    
-    if (f->mode = O_WRONLY) {
-        ssize_t check = write(f->fd, f->cache, f->pos_tag - f->tag);
+    if (f->mode == O_WRONLY) {
+        ssize_t n = write(f->fd, f->cache, f->pos_tag - f->tag);
         // printf("%d\n", (int)n);
-        if (check == -1) {
+        if (n == -1) {
             return -1;
         }
         //assert((size_t) n == f->pos_tag - f->tag);
         f->tag = f->pos_tag;
-        return check;
+        return n;
     }
     else {
         return 0;
@@ -253,13 +247,9 @@ int io61_seek(io61_file* f, off_t pos) {
         return 0;
     }
 
-    size_t loc = lseek(f->fd, (off_t) align, SEEK_SET);
-    if (loc == (int) align)
+    if (lseek(f->fd, (off_t) align, SEEK_SET) == (int) align)
     {
-        if (f->mode == O_WRONLY)
-            {
-                io61_flush(f);
-            }
+
         f->tag = f->end_tag = align;
         if (f->mode == O_RDONLY)
         {
