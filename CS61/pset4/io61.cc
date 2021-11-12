@@ -13,7 +13,7 @@ struct io61_file {
     // File descriptor
     int fd;
     // Size of cache
-    static constexpr off_t cache_size = 8192;
+    static constexpr off_t cache_size = 4096;
     // Create cache
     unsigned char cache[cache_size]; 
     // Cache tags from section
@@ -35,7 +35,7 @@ io61_file* io61_fdopen(int fd, int mode) {
     f->fd = fd;
     // Add mode to struct to mark file 
     f->mode = mode;
-    // Reset
+    // Reset cache tags
     f->tag = 0;
     f->end_tag = 0;
     f->pos_tag = 0;
@@ -58,15 +58,6 @@ int io61_close(io61_file* f) {
 //    Read a single (unsigned) character from `f` and return it. Returns EOF
 //    (which is -1) on error or end-of-file.
 
-int io61_readc(io61_file* f) {
-    unsigned char buf[1];
-    if (io61_read(f, buf, 1) == 1) {
-        return buf[0];
-    } else {
-        return EOF;
-    }
-}
-
 
 // io61_read(f, buf, sz)
 //    Read up to `sz` characters from `f` into `buf`. Returns the number of
@@ -88,7 +79,23 @@ int io61_fill(io61_file* f) {
     return bytes_read;
 }
 
-
+int io61_readc(io61_file* f) {
+    unsigned char buf;
+    // if (io61_read(f, buf, 1) == 1) {
+    //     return buf[0];
+    // } else {
+    //     return EOF;
+    // }
+    if (f->pos_tag == f->end_tag)
+    {
+        int nread = io61_fill(f);
+        if (nread <= 0)
+            return EOF;
+    }
+    // Copies over 1 byte into buffer from cache
+    memcpy(&buf, &f->cache[f->pos_tag - f->tag], 1);
+    f->pos_tag++;
+}
 
 ssize_t io61_read(io61_file* f, unsigned char* buf, size_t sz) {
 
