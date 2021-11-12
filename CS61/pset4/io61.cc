@@ -22,7 +22,7 @@ struct io61_file {
     off_t end_tag; 
     off_t pos_tag;
     // Mode of file
-    int mode = 0;
+    int mode;
 };
 
 // io61_fdopen(fd, mode)
@@ -34,7 +34,10 @@ io61_file* io61_fdopen(int fd, int mode) {
     assert(fd >= 0);
     io61_file* f = new io61_file;
     f->fd = fd;
-    (void) mode;
+    f->mode = mode;
+    f->tag = 0;
+    f->end_tag = 0;
+    f->pos_tag = 0;
     return f;
 }
 
@@ -78,7 +81,7 @@ int io61_fill(io61_file* f) {
     // Declare variable to hold "read" return value
     int bytes_read;
     bytes_read = read(f->fd, f->cache, f->cache_size);
-    if (bytes_read != 0) {
+    if (bytes_read >= 0) {
         f->end_tag = (f->tag + bytes_read); 
     }
     return bytes_read;
@@ -159,7 +162,6 @@ ssize_t io61_write(io61_file* f, const unsigned char* buf, size_t sz) {
     //Check invariants.
     assert(f->tag <= f->pos_tag && f->pos_tag <= f->end_tag);
     assert(f->end_tag - f->pos_tag <= f->cache_size);
-    fprintf(stderr, "Got here at least once");
     // Write cache invariant.
     assert(f->pos_tag == f->end_tag);
 
