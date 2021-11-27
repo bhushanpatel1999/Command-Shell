@@ -5,23 +5,31 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 
+using namespace std;
 // For the love of God
 #undef exit
 #define exit __DO_NOT_CALL_EXIT__READ_PROBLEM_SET_DESCRIPTION__
 
-
 // struct command
 //    Data structure describing a command. Add your own stuff.
-
 struct command {
     std::vector<std::string> args;
+    // Pointers to next and previous nodes
+    command* next = nullptr;
+    command* prev = nullptr;
     pid_t pid = -1;      // process ID running this command, -1 if none
+
+    // Stores exit status of child process
+    int status;
 
     command();
     ~command();
 
     pid_t run();
+    // type of connection to next command in linked list
+    int link = TYPE_SEQUENCE; 
 };
+
 
 
 // command::command()
@@ -60,8 +68,23 @@ command::~command() {
 pid_t command::run() {
     assert(this->args.size() > 0);
     // Your code here!
+    // Declare vector for child's arguments and copy over from this->args using c_str()
+    vector<char*> child_args;
+    for (auto it = this->args.begin(); it != this->args.end(); it++) {
+        child_args.push_back((char*) (*it).c_str());
+    }
+    // Add terminating null character to end arguments
+    child_args.push_back(NULL);
+    // Fork child and if valid, run execvp with new argument vector
+    pid_t p = fork();
+    if (p == 0) {
+        if (execvp(child_args[0], child_args.data()) < 0) {
+            _exit(1);
+        }
+        return p;
+    }  
 
-    fprintf(stderr, "command::run not done yet\n");
+    // fprintf(stderr, "command::run not done yet\n");
     return this->pid;
 }
 
@@ -92,9 +115,43 @@ pid_t command::run() {
 //       - Call `claim_foreground(pgid)` before waiting for the pipeline.
 //       - Call `claim_foreground(0)` once the pipeline is complete.
 
-void run_list(command* c) {
-    c->run();
-    fprintf(stderr, "command::run not done yet\n");
+void run_list(command* ccur) {
+    
+    while (ccur != nullptr) {
+        // fprintf(stderr, "command::run not done yet\n");
+        // Next operator is ";" so run in foreground
+        // Traverse linked list
+        ccur->run();
+
+        if (ccur->link == TYPE_SEQUENCE) {
+            // Wait for status of current command to update before proceeding
+            waitpid(ccur->pid, &ccur->status, 0);
+            if (!WIFEXITED(ccur->status)) {
+                break;
+            }
+        }
+
+        else if (ccur->link == TYPE_AND) {
+            // Wait for status of current command to update before proceeding
+            waitpid(ccur->pid, &ccur->status, 0);
+            if (!WIFEXITED(ccur->status)) {
+                break;
+            }
+            else if (WIFEXITED(ccur->status) && WEXITSTATUS(ccur->status) != 0) {
+                break;
+            }
+        }
+
+        else if (ccur->link == TYPE_OR) {
+            // Wait for status of current command to update before proceeding
+            waitpid(ccur->pid, &ccur->status, 0);
+            if (WIFEXITED(ccur->status) && WEXITSTATUS(ccur->status) == 0) {
+                break;
+                //good_exit = 1
+            }
+        }
+        ccur = ccur->next;
+    }
 }
 
 
@@ -110,14 +167,51 @@ command* parse_line(const char* s) {
     // Build the command
     // The handout code treats every token as a normal command word.
     // You'll add code to handle operators.
-    command* c = nullptr;
+    // Linked list structure from section
+    command* chead = nullptr;    // first command in list
+    command* clast = nullptr;    // last command in list
+    command* ccur = nullptr;     // current command being built
     for (shell_token_iterator it = parser.begin(); it != parser.end(); ++it) {
-        if (!c) {
-            c = new command;
+        switch (it.type()) {
+        case TYPE_NORMAL: 
+            if (!ccur) {
+                ccur = new command;
+                if (clast) {
+                    clast->next = ccur;
+                    ccur->prev = clast;
+                } else {
+                chead = ccur;
+                }
+            }
+            ccur->args.push_back(it.str());
+            break;
+        case TYPE_BACKGROUND:
+            assert(ccur);
+            clast = ccur;
+            clast->link = it.type();
+            ccur = nullptr;
+            break;
+        case TYPE_SEQUENCE:
+            assert(ccur);
+            clast = ccur;
+            clast->link = it.type();
+            ccur = nullptr;
+            break;
+        case TYPE_AND:
+            assert(ccur);
+            clast = ccur;
+            clast->link = it.type();
+            ccur = nullptr;
+            break;
+        case TYPE_OR:
+            assert(ccur);
+            clast = ccur;
+            clast->link = it.type();
+            ccur = nullptr;
+            break;
         }
-        c->args.push_back(it.str());
     }
-    return c;
+    return chead;
 }
 
 

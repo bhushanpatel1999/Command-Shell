@@ -33,7 +33,7 @@ int main(int argc, char* argv[]) {
         io61_writec(outf, ch);
     }
 
-    io61_close(inf);
+    io61_close(inf);    
     io61_close(outf);
     io61_profile_end();
 }
