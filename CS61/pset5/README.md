@@ -7,7 +7,7 @@ collaborators, in `AUTHORS.md`.
 
 Grading notes (if any)
 ----------------------
-
+I intend on using my one regrade on this pset.
 
 
 Extra credit attempted (if any)
