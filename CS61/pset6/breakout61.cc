@@ -76,21 +76,37 @@ void warp_thread(pong_warp* w) {
     pong_cell& cdest = w->board.cell(w->x, w->y);
     while (true) {
         // wait for a ball to arrive
-        while (!w->ball) {
-            usleep(0);
+        // Lock this warp tunnel
+
+        w->warp_mutex.lock();
+
+        while (!w->warp_vector.size()) {
+            w->warp_cv.wait(w->warp_mutex);
         }
-        pong_ball* b = w->ball;
-        w->ball = nullptr;
+
+
+        pong_ball* b = w->warp_vector.back();
+        //b->board.marray[b->y+1].lock();
+        w->warp_vector.pop_back();
+        w->warp_mutex.unlock();
+
 
         // ball stays in the warp tunnel for `warp_delay` usec
         usleep(warp_delay);
 
         // then it appears on the destination cell
-        assert(!cdest.ball);
+        // while (cdest.ball) {
+        //     sleep(0);
+        // }
+        w->board.marray[w->y + 1].lock();
+        b->ball_mutex.lock();
         cdest.ball = b;
         b->x = w->x;
         b->y = w->y;
         b->stopped = false;
+        b->ball_cv.notify_all();
+        b->ball_mutex.unlock();
+        w->board.marray[w->y + 1].unlock();
     }
 }
 

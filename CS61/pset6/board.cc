@@ -35,20 +35,12 @@ pong_board::~pong_board() {
 int pong_ball::move() {
 
     // Scoped lock for the row above ball, row of ball, and row below ball
-    if (this->y != 0 && this->y != (this->board.height - 1)) {
-        std::scoped_lock scope1(this->board.marray[this->y-1], this->board.marray[this->y], this->board.marray[this->y+1]);
-    }
-    else if (this->y == 0) {
-        std::scoped_lock scope2(this->board.marray[this->y], this->board.marray[this->y+1]);
-    }
-    else {
-        std::scoped_lock scope3(this->board.marray[this->y-1], this->board.marray[this->y]);
-    }
+    std::scoped_lock scope1(this->board.marray[this->y], this->board.marray[this->y+1], this->board.marray[this->y+2]);
 
     pong_cell& ccur = board.cell(this->x, this->y);
 
     // Try locking this ball
-    std::unique_lock<std::mutex> ulock(this->ball_mutex);
+    //std::unique_lock<std::mutex> ulock(this->ball_mutex);
 
     // if stopped, nothing to do
     if (this->stopped) {
@@ -94,7 +86,9 @@ int pong_ball::move() {
     } else if (cnext.type == cell_warp) {
         // warp: fall off board into warp tunnel
         ccur.ball = nullptr;
+        this->ball_mutex.lock();
         this->stopped = true;
+        this->ball_mutex.unlock();
         cnext.warp->accept_ball(this);
         return 0;
     } else if (cnext.type == cell_trash) {
@@ -146,6 +140,10 @@ void pong_cell::hit_obstacle() {
 //    order.)
 
 void pong_warp::accept_ball(pong_ball* b) {
-    assert(!this->ball);
-    this->ball = b;
+    // assert(!this->ball);
+    // this->ball = b;
+    this->warp_mutex.lock();
+    this->warp_vector.insert(this->warp_vector.begin(), b);
+    this->warp_cv.notify_all();
+    this->warp_mutex.unlock();
 }

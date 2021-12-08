@@ -45,7 +45,7 @@ struct pong_board {
     std::vector<pong_warp*> warps;
     
     // Declare array of mutexes for each row
-    std::mutex marray[31];
+    std::mutex marray[33];
 
     pong_cell obstacle_cell;          // represents off-board positions
     std::atomic<unsigned long> ncollisions = 0;
@@ -111,9 +111,21 @@ struct pong_warp {
     pong_board& board;
     int x;
     int y;
+
+    // Add vector for queue of balls
+    std::vector<pong_ball*> warp_vector;
+
     pong_ball* ball = nullptr;
 
+    // Add mutex for warp
+    std::mutex warp_mutex;
 
+    // Add CV to notify that ball has arrived
+    std::condition_variable_any warp_cv;
+
+    // Add CV to notify when to advance queue
+    std::condition_variable_any queue_cv;
+    
     pong_warp(pong_board& board_)
         : board(board_) {
     }
