@@ -1,5 +1,8 @@
 #include "board.hh"
+#include <mutex>
 
+// Declare single mutex for coarse-grained
+// std::mutex main_mutex;
 
 // pong_board(w, h) constructor
 //    Construct a new `w x h` pong board with all empty cells.
@@ -17,6 +20,7 @@ pong_board::~pong_board() {
 }
 
 
+
 // pong_ball::move()
 //    Move this ball once.
 //
@@ -29,7 +33,22 @@ pong_board::~pong_board() {
 //    holes, and sticky cells. You should preserve its current logic while
 //    adding sufficient synchronization to make it thread-safe.
 int pong_ball::move() {
+
+    // Scoped lock for the row above ball, row of ball, and row below ball
+    if (this->y != 0 && this->y != (this->board.height - 1)) {
+        std::scoped_lock scope1(this->board.marray[this->y-1], this->board.marray[this->y], this->board.marray[this->y+1]);
+    }
+    else if (this->y == 0) {
+        std::scoped_lock scope2(this->board.marray[this->y], this->board.marray[this->y+1]);
+    }
+    else {
+        std::scoped_lock scope3(this->board.marray[this->y-1], this->board.marray[this->y]);
+    }
+
     pong_cell& ccur = board.cell(this->x, this->y);
+
+    // Try locking this ball
+    std::unique_lock<std::mutex> ulock(this->ball_mutex);
 
     // if stopped, nothing to do
     if (this->stopped) {
@@ -55,6 +74,7 @@ int pong_ball::move() {
     // check next cell
     pong_cell& cnext = this->board.cell(this->x + this->dx,
                                         this->y + this->dy);
+
     if (cnext.ball) {
         // collision: change both balls' directions without moving them
         if (cnext.ball->dx != this->dx) {
@@ -65,7 +85,10 @@ int pong_ball::move() {
             cnext.ball->dy = this->dy;
             this->dy = -this->dy;
         }
+        cnext.ball->ball_mutex.lock();
         cnext.ball->stopped = false;
+        cnext.ball->ball_cv.notify_all();
+        cnext.ball->ball_mutex.unlock();
         ++this->board.ncollisions;
         return 0;
     } else if (cnext.type == cell_warp) {

@@ -14,6 +14,8 @@
 #include <deque>
 #include <functional>
 
+// Declare single mutex for coarse-grained
+std::mutex main_mutex;
 
 // breakout board
 pong_board* main_board;
@@ -35,9 +37,13 @@ static std::atomic<long> nrunning;
 
 void ball_thread(pong_ball* b) {
     ++nrunning;
-
     while (true) {
         int mval = b->move();
+        b->ball_mutex.lock();
+        while (b->stopped) {
+            b->ball_cv.wait(b->ball_mutex);
+        }
+        b->ball_mutex.unlock();
         if (mval > 0) {
             // ball successfully moved; wait `delay` to move it again
             if (delay > 0) {
@@ -48,7 +54,6 @@ void ball_thread(pong_ball* b) {
             break;
         }
     }
-
     delete b;
     --nrunning;
 }

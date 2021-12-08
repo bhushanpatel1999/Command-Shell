@@ -43,9 +43,12 @@ struct pong_board {
     int height;
     std::vector<pong_cell> cells;     // `width * height`, row-major order
     std::vector<pong_warp*> warps;
+    
+    // Declare array of mutexes for each row
+    std::mutex marray[31];
 
     pong_cell obstacle_cell;          // represents off-board positions
-    unsigned long ncollisions = 0;
+    std::atomic<unsigned long> ncollisions = 0;
 
 
     pong_board(int w, int h);
@@ -72,6 +75,12 @@ struct pong_board {
 
 
 struct pong_ball {
+    // Declare mutex for this specific ball
+    std::mutex ball_mutex;
+    
+    // Declare CV variable
+    std::condition_variable_any ball_cv;
+
     pong_board& board;
     bool stopped = false;
     int x = 0;
