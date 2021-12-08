@@ -7,8 +7,9 @@ collaborators, in `AUTHORS.md`.
 
 Grading notes (if any)
 ----------------------
-
+Got additional late hours from Eddie
 
 
 Extra credit attempted (if any)
 -------------------------------
+N/A
