@@ -1,8 +1,6 @@
 #include "board.hh"
 #include <mutex>
 
-// Declare single mutex for coarse-grained
-// std::mutex main_mutex;
 
 // pong_board(w, h) constructor
 //    Construct a new `w x h` pong board with all empty cells.
@@ -17,6 +15,9 @@ pong_board::~pong_board() {
     for (auto w : this->warps) {
         delete w;
     }
+
+    // Free dynamically allocated array
+    delete[] this->marray;
 }
 
 
@@ -38,9 +39,6 @@ int pong_ball::move() {
     std::scoped_lock scope1(this->board.marray[this->y], this->board.marray[this->y+1], this->board.marray[this->y+2]);
 
     pong_cell& ccur = board.cell(this->x, this->y);
-
-    // Try locking this ball
-    //std::unique_lock<std::mutex> ulock(this->ball_mutex);
 
     // if stopped, nothing to do
     if (this->stopped) {
@@ -77,6 +75,8 @@ int pong_ball::move() {
             cnext.ball->dy = this->dy;
             this->dy = -this->dy;
         }
+
+        // Lock ball's mutex to changed "stopped" bool and notify ball_thread it's unstuck
         cnext.ball->ball_mutex.lock();
         cnext.ball->stopped = false;
         cnext.ball->ball_cv.notify_all();
@@ -86,6 +86,8 @@ int pong_ball::move() {
     } else if (cnext.type == cell_warp) {
         // warp: fall off board into warp tunnel
         ccur.ball = nullptr;
+
+        // Lock ball's mutex to change "stopped" bool and send to warp tunnel
         this->ball_mutex.lock();
         this->stopped = true;
         this->ball_mutex.unlock();
@@ -140,8 +142,9 @@ void pong_cell::hit_obstacle() {
 //    order.)
 
 void pong_warp::accept_ball(pong_ball* b) {
-    // assert(!this->ball);
-    // this->ball = b;
+    
+    // Lock the warp's mutex to add to it's queue
+    // Also notify in case queue is empty and warp_thread is blocking
     this->warp_mutex.lock();
     this->warp_vector.insert(this->warp_vector.begin(), b);
     this->warp_cv.notify_all();

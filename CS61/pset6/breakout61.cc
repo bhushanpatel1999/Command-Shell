@@ -13,9 +13,7 @@
 #include <random>
 #include <deque>
 #include <functional>
-
-// Declare single mutex for coarse-grained
-std::mutex main_mutex;
+#include <new>
 
 // breakout board
 pong_board* main_board;
@@ -39,11 +37,14 @@ void ball_thread(pong_ball* b) {
     ++nrunning;
     while (true) {
         int mval = b->move();
+        
+        // Block until notified that ball can move again (after collision or warping)
         b->ball_mutex.lock();
         while (b->stopped) {
             b->ball_cv.wait(b->ball_mutex);
         }
         b->ball_mutex.unlock();
+
         if (mval > 0) {
             // ball successfully moved; wait `delay` to move it again
             if (delay > 0) {
@@ -76,35 +77,41 @@ void warp_thread(pong_warp* w) {
     pong_cell& cdest = w->board.cell(w->x, w->y);
     while (true) {
         // wait for a ball to arrive
+        
         // Lock this warp tunnel
-
         w->warp_mutex.lock();
 
+        // Block until ball is in queue
         while (!w->warp_vector.size()) {
             w->warp_cv.wait(w->warp_mutex);
         }
 
-
+        // Assign first ball in queue to warp tunnel and remove from queue 
         pong_ball* b = w->warp_vector.back();
-        //b->board.marray[b->y+1].lock();
         w->warp_vector.pop_back();
-        w->warp_mutex.unlock();
 
+        // Unlock mutex so accept_ball can add to queue
+        w->warp_mutex.unlock();
 
         // ball stays in the warp tunnel for `warp_delay` usec
         usleep(warp_delay);
 
         // then it appears on the destination cell
-        // while (cdest.ball) {
-        //     sleep(0);
-        // }
+        
+        // Lock the row of ball's destination to ensure its empty
         w->board.marray[w->y + 1].lock();
+
+        // Lock ball's mutex while we change its position 
         b->ball_mutex.lock();
         cdest.ball = b;
         b->x = w->x;
         b->y = w->y;
         b->stopped = false;
+
+        // Notify ball CV in ball_thread to resume moving
         b->ball_cv.notify_all();
+
+        // Unlock ball's and destination row's mutex
         b->ball_mutex.unlock();
         w->board.marray[w->y + 1].unlock();
     }
@@ -233,6 +240,10 @@ int main(int argc, char** argv) {
     // create pong board
     pong_board board(width, height);
     main_board = &board;
+
+    // Dynamically allocate array of mutexes for each row 
+    // Allocate 2 extra for edge cases
+    main_board->marray = new std::mutex[height + 2];
 
     // place bricks
     for (int n = 0; n < nbricks; ++n) {

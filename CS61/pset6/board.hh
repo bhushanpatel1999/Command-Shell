@@ -44,10 +44,13 @@ struct pong_board {
     std::vector<pong_cell> cells;     // `width * height`, row-major order
     std::vector<pong_warp*> warps;
     
-    // Declare array of mutexes for each row
-    std::mutex marray[33];
+    // Declare dynamically-allocated array of mutexes for each row
+    // Dynamically allocated in main() after board creation
+    std::mutex* marray;
 
     pong_cell obstacle_cell;          // represents off-board positions
+
+    // Change to atmoic to stop data races
     std::atomic<unsigned long> ncollisions = 0;
 
 
@@ -75,10 +78,10 @@ struct pong_board {
 
 
 struct pong_ball {
-    // Declare mutex for this specific ball
+    // Declare mutex for each specific ball
     std::mutex ball_mutex;
     
-    // Declare CV variable
+    // Declare condition variable for each ball 
     std::condition_variable_any ball_cv;
 
     pong_board& board;
@@ -117,15 +120,12 @@ struct pong_warp {
 
     pong_ball* ball = nullptr;
 
-    // Add mutex for warp
+    // Add mutex for each warp
     std::mutex warp_mutex;
 
-    // Add CV to notify that ball has arrived
+    // Add cond. variable to notify that ball has arrived
     std::condition_variable_any warp_cv;
 
-    // Add CV to notify when to advance queue
-    std::condition_variable_any queue_cv;
-    
     pong_warp(pong_board& board_)
         : board(board_) {
     }
