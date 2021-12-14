@@ -4,6 +4,9 @@
 #include <vector>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <iostream>
+#include <fcntl.h>  
+#include <unistd.h>
 
 using namespace std;
 // For the love of God
@@ -26,11 +29,14 @@ struct command {
     ~command();
 
     pid_t run();
+
     // type of connection to next command in linked list
     int link; 
 
-    // // Bool to know when to stop background chain
-    // bool
+    // Name of redirection files
+    std::string input_file;
+    std::string output_file;
+    std::string error_file;
 };
 
 
@@ -51,7 +57,6 @@ command::~command() {
 
 struct chain {
     command* start = nullptr;
-    command* end = nullptr;
 
     bool background = false;
 
@@ -66,6 +71,13 @@ chain::~chain() {
 }
 // Vector to hold commands that start a background chain
 std::vector<chain*> cond_chain;
+
+// Bool for pipe hygiene
+bool is_read_end_open = false;
+
+// Read end of the previous pipe
+int read_end;
+
 
 // COMMAND EXECUTION
 
@@ -88,6 +100,8 @@ std::vector<chain*> cond_chain;
 pid_t command::run() {
     assert(this->args.size() > 0);
     // Your code here!
+    // Declare pipe FDs
+    int pfd[2];
     // Declare vector for child's arguments and copy over from this->args using c_str()
     vector<char*> child_args;
     for (auto it = this->args.begin(); it != this->args.end(); it++) {
@@ -95,13 +109,85 @@ pid_t command::run() {
     }
     // Add terminating null character to end arguments
     child_args.push_back(NULL);
+
+
+    if (this->link == TYPE_PIPE) {
+        int check = pipe(pfd);
+        assert(check == 0);
+    }
+
     // Fork child and if valid, run execvp with new argument vector
     pid_t p = fork();
+
+    if (is_read_end_open) {
+        if (p == 0) {
+            dup2(read_end, 0);
+            close(read_end);
+        }
+        if (p > 0) {
+            close(read_end);
+            is_read_end_open = false;
+        }
+    }
+
+    if (this->link == TYPE_PIPE) {
+        if (p == 0) {
+            close(pfd[0]);
+            dup2(pfd[1], 1);
+            close(pfd[1]);
+        }
+        if (p > 0) {
+            close(pfd[1]);
+        }
+        is_read_end_open = true;
+        read_end = pfd[0];
+    }
+
+    if (!this->input_file.empty() || !this->output_file.empty() || !this->error_file.empty()) {
+        if (p == 0) {
+            if (!this->input_file.empty()) {
+                //const char* file = this->input_file.c_str();
+                int fd_0 = open((const char*)this->input_file.c_str(), O_RDONLY, 0666);
+                if (fd_0 == -1) {
+                    fprintf(stderr, "No such file or directory \n");
+                    _exit(1);
+                }
+                else {
+                    dup2(fd_0, 0);
+                    close(fd_0);
+                }  
+            }
+            if (!this->output_file.empty()) {
+                int fd_1 = open((const char*)this->output_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                if (fd_1 == -1) {
+                    fprintf(stderr, "No such file or directory \n");
+                    _exit(1);
+                }
+                else {
+                    dup2(fd_1, 1);
+                    close(fd_1);
+                }  
+            }
+            if (!this->input_file.empty()) {
+                int fd_2 = open((const char*)this->error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                if (fd_2 == -1) {
+                    fprintf(stderr, "No such file or directory \n");
+                    _exit(1);
+                }
+                else {
+                    dup2(fd_2, 2);
+                    close(fd_2);
+                }  
+            }
+        }
+    }
+
     if (p == 0) {
         if (execvp(child_args[0], child_args.data()) < 0) {
             _exit(1);
         }
         this->pid = getpid();
+        // return this->pid;
     }  
 
     // fprintf(stderr, "command::run not done yet\n");
@@ -140,32 +226,22 @@ void run_conditional(chain* this_chain) {
 
     command* ccur = this_chain->start;
     while (ccur != nullptr) {
-        // fprintf(stderr, "command::run not done yet\n");
-        // Next operator is ";" so run in foreground
-        // Traverse linked list
         ccur->run();
 
-        // if (ccur->link == TYPE_SEQUENCE) {
-        //     // Wait for status of current command to update before proceeding
-        // }
-
-        // else if (ccur->link == TYPE_BACKGROUND) {
-        //     // Wait for status of current command to update before proceeding
-        //     // waitpid(ccur->pid, &ccur->status, 0);
-        //     // if (!WIFEXITED(ccur->status)) {
-        //     //     fprintf(stderr, "Child did not exit correctly.\n");
-        //     // }
-        //     ccur = ccur->next;
-        // }
-
+        if (ccur->link == TYPE_PIPE) {
+            // ccur = ccur->next;
+            // ccur->run();
+            while (ccur->link == TYPE_PIPE) {
+                ccur = ccur->next;
+                ccur->run();
+            }
+            waitpid(ccur->pid, &ccur->status, 0);
+        }
 
         if (ccur->link == TYPE_AND) {
             // Wait for status of current command to update before proceeding
             waitpid(ccur->pid, &ccur->status, 0);
-            if (!WIFEXITED(ccur->status)) {
-                fprintf(stderr, "Child did not exit correctly.\n");
-            }
-            else if (WEXITSTATUS(ccur->status) != 0) {
+            if (!WIFEXITED(ccur->status) || WEXITSTATUS(ccur->status) != 0) {
                 while (ccur->link != TYPE_OR && ccur->next != nullptr) {
                     ccur = ccur->next;
                 }
@@ -175,10 +251,7 @@ void run_conditional(chain* this_chain) {
         else if (ccur->link == TYPE_OR) {
             // Wait for status of current command to update before proceeding
             waitpid(ccur->pid, &ccur->status, 0);
-            if (!WIFEXITED(ccur->status)) {
-                fprintf(stderr, "Child did not exit correctly.\n");
-            }
-            else if (WEXITSTATUS(ccur->status) == 0) {
+            if (WIFEXITED(ccur->status) && WEXITSTATUS(ccur->status) == 0) {
                 while (ccur->link != TYPE_AND && ccur->next != nullptr) {
                     ccur = ccur->next;
                 }
@@ -203,7 +276,6 @@ void run_conditional(chain* this_chain) {
 void run_list(command* ccur) {
 
     chain* curr_chain;
-    command* cend;
 
     for (size_t i = 0; i != cond_chain.size(); i++) {
         curr_chain = cond_chain[i];
@@ -218,67 +290,7 @@ void run_list(command* ccur) {
             }
         }
     }  
-
-    // while (ccur != nullptr) {
-    //     // fprintf(stderr, "command::run not done yet\n");
-    //     // Next operator is ";" so run in foreground
-    //     // Traverse linked list
-    //     ccur->run();
-
-    //     if (ccur->link == TYPE_SEQUENCE) {
-    //         // Wait for status of current command to update before proceeding
-    //         waitpid(ccur->pid, &ccur->status, 0);
-    //         if (!WIFEXITED(ccur->status)) {
-    //             fprintf(stderr, "Child did not exit correctly.\n");
-    //         }
-    //         ccur = ccur->next;
-    //     }
-
-    //     else if (ccur->link == TYPE_BACKGROUND) {
-    //         // Wait for status of current command to update before proceeding
-    //         // waitpid(ccur->pid, &ccur->status, 0);
-    //         // if (!WIFEXITED(ccur->status)) {
-    //         //     fprintf(stderr, "Child did not exit correctly.\n");
-    //         // }
-    //         ccur = ccur->next;
-    //     }
-
-    //     else if (ccur->link == TYPE_AND) {
-    //         // Wait for status of current command to update before proceeding
-    //         waitpid(ccur->pid, &ccur->status, 0);
-    //         if (!WIFEXITED(ccur->status)) {
-    //             fprintf(stderr, "Child did not exit correctly.\n");
-    //         }
-    //         else if (WEXITSTATUS(ccur->status) != 0) {
-    //             while (ccur->link != TYPE_OR && ccur->next != nullptr) {
-    //                 ccur = ccur->next;
-    //             }
-    //         }
-    //     }
-
-    //     else if (ccur->link == TYPE_OR) {
-    //         // Wait for status of current command to update before proceeding
-    //         waitpid(ccur->pid, &ccur->status, 0);
-    //         if (!WIFEXITED(ccur->status)) {
-    //             fprintf(stderr, "Child did not exit correctly.\n");
-    //         }
-    //         else if (WEXITSTATUS(ccur->status) == 0) {
-    //             while (ccur->link != TYPE_AND && ccur->next != nullptr) {
-    //                 ccur = ccur->next;
-    //             }
-    //         }
-    //     }
-    //     ccur = ccur->next;
-    // }
 }
-
-// run_conditional(ccur)
-//    Run the chain of commands that should be ran in the background
-
-
-// void run_conditional(command* cstart) {
-
-// }
 
 // parse_line(s)
 //    Parse the command list in `s` and return it. Returns `nullptr` if
@@ -298,6 +310,11 @@ command* parse_line(const char* s) {
     command* ccur = nullptr;     // current command being built
     cond_chain.clear();
     chain* old_chain = new chain;
+
+    // Bools for redirection
+    bool input_file = false;
+    bool output_file = false;
+    bool error_file = false;
 
     for (shell_token_iterator it = parser.begin(); it != parser.end(); ++it) {
         
@@ -321,16 +338,24 @@ command* parse_line(const char* s) {
         // Execute different blocks based on operators
         switch (it.type()) {
         case TYPE_NORMAL: 
-            ccur->args.push_back(it.str());
-            if (it == parser.end()) {
-                old_chain->end = ccur;
+            if (input_file) {
+                ccur->input_file = it.str();
+                input_file = false;
             }
+            if (output_file) {
+                ccur->output_file = it.str();
+                output_file = false;
+            }
+            if (error_file) {
+                ccur->error_file = it.str();
+                error_file = false;
+            }
+            ccur->args.push_back(it.str());
             break;
         case TYPE_BACKGROUND: 
             assert(ccur);
             clast = ccur;
             clast->link = it.type();
-            old_chain->end = ccur;
             old_chain->background = true;
             if (it != parser.end()) {
                 chain* new_chain = new chain;
@@ -342,7 +367,6 @@ command* parse_line(const char* s) {
             assert(ccur);
             clast = ccur;
             clast->link = it.type();
-            old_chain->end = ccur;
             old_chain->background = false;
             if (it != parser.end()) {
                 chain* new_chain = new chain;
@@ -355,6 +379,28 @@ command* parse_line(const char* s) {
             clast = ccur;
             clast->link = it.type();
             ccur = nullptr;
+            break;
+        case TYPE_PIPE:
+            assert(ccur);
+            clast = ccur;
+            clast->link = it.type();
+            ccur = nullptr;
+            break;
+        case TYPE_REDIRECT_OP:
+            assert(ccur);
+            clast = ccur;
+            clast->link = it.type();
+            ccur = nullptr;
+            std::string redirect_type = it.str();
+            if (redirect_type.compare(std::string(">")) == 0) {
+                output_file = true;
+            }
+            else if (redirect_type.compare(std::string("<")) == 0) {
+                input_file = true;
+            }
+            else if (redirect_type.compare(std::string("2>")) == 0) {
+                error_file = true;
+            }
             break;
         }
     }
