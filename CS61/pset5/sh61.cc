@@ -27,9 +27,11 @@ struct command {
 
     pid_t run();
     // type of connection to next command in linked list
-    int link = TYPE_SEQUENCE; 
-};
+    int link; 
 
+    // // Bool to know when to stop background chain
+    // bool
+};
 
 
 // command::command()
@@ -46,6 +48,24 @@ command::command() {
 command::~command() {
 }
 
+
+struct chain {
+    command* start = nullptr;
+    command* end = nullptr;
+
+    bool background = false;
+
+    chain();
+    ~chain();
+};
+
+chain::chain() {
+}
+
+chain::~chain() {
+}
+// Vector to hold commands that start a background chain
+std::vector<chain*> cond_chain;
 
 // COMMAND EXECUTION
 
@@ -81,7 +101,7 @@ pid_t command::run() {
         if (execvp(child_args[0], child_args.data()) < 0) {
             _exit(1);
         }
-        return p;
+        this->pid = getpid();
     }  
 
     // fprintf(stderr, "command::run not done yet\n");
@@ -115,45 +135,150 @@ pid_t command::run() {
 //       - Call `claim_foreground(pgid)` before waiting for the pipeline.
 //       - Call `claim_foreground(0)` once the pipeline is complete.
 
-void run_list(command* ccur) {
-    
+
+void run_conditional(chain* this_chain) {
+
+    command* ccur = this_chain->start;
     while (ccur != nullptr) {
         // fprintf(stderr, "command::run not done yet\n");
         // Next operator is ";" so run in foreground
         // Traverse linked list
         ccur->run();
 
-        if (ccur->link == TYPE_SEQUENCE) {
-            // Wait for status of current command to update before proceeding
-            waitpid(ccur->pid, &ccur->status, 0);
-            if (!WIFEXITED(ccur->status)) {
-                break;
-            }
-        }
+        // if (ccur->link == TYPE_SEQUENCE) {
+        //     // Wait for status of current command to update before proceeding
+        // }
 
-        else if (ccur->link == TYPE_AND) {
+        // else if (ccur->link == TYPE_BACKGROUND) {
+        //     // Wait for status of current command to update before proceeding
+        //     // waitpid(ccur->pid, &ccur->status, 0);
+        //     // if (!WIFEXITED(ccur->status)) {
+        //     //     fprintf(stderr, "Child did not exit correctly.\n");
+        //     // }
+        //     ccur = ccur->next;
+        // }
+
+
+        if (ccur->link == TYPE_AND) {
             // Wait for status of current command to update before proceeding
             waitpid(ccur->pid, &ccur->status, 0);
             if (!WIFEXITED(ccur->status)) {
-                break;
+                fprintf(stderr, "Child did not exit correctly.\n");
             }
-            else if (WIFEXITED(ccur->status) && WEXITSTATUS(ccur->status) != 0) {
-                break;
+            else if (WEXITSTATUS(ccur->status) != 0) {
+                while (ccur->link != TYPE_OR && ccur->next != nullptr) {
+                    ccur = ccur->next;
+                }
             }
         }
 
         else if (ccur->link == TYPE_OR) {
             // Wait for status of current command to update before proceeding
             waitpid(ccur->pid, &ccur->status, 0);
-            if (WIFEXITED(ccur->status) && WEXITSTATUS(ccur->status) == 0) {
-                break;
-                //good_exit = 1
+            if (!WIFEXITED(ccur->status)) {
+                fprintf(stderr, "Child did not exit correctly.\n");
+            }
+            else if (WEXITSTATUS(ccur->status) == 0) {
+                while (ccur->link != TYPE_AND && ccur->next != nullptr) {
+                    ccur = ccur->next;
+                }
             }
         }
+
+        else {
+            waitpid(ccur->pid, &ccur->status, 0);
+            if (!WIFEXITED(ccur->status)) {
+                fprintf(stderr, "Child did not exit correctly.\n");
+            }
+        }
+
+        if (ccur->link == TYPE_BACKGROUND || ccur->link == TYPE_SEQUENCE) {
+            break;
+        }
+
         ccur = ccur->next;
-    }
+    } 
 }
 
+void run_list(command* ccur) {
+
+    chain* curr_chain;
+    command* cend;
+
+    for (size_t i = 0; i != cond_chain.size(); i++) {
+        curr_chain = cond_chain[i];
+        if (!curr_chain->background) {
+            run_conditional(curr_chain);
+        }
+        else {
+            pid_t childpid = fork();
+            if (childpid == 0) {
+                run_conditional(curr_chain);
+                _exit(0);
+            }
+        }
+    }  
+
+    // while (ccur != nullptr) {
+    //     // fprintf(stderr, "command::run not done yet\n");
+    //     // Next operator is ";" so run in foreground
+    //     // Traverse linked list
+    //     ccur->run();
+
+    //     if (ccur->link == TYPE_SEQUENCE) {
+    //         // Wait for status of current command to update before proceeding
+    //         waitpid(ccur->pid, &ccur->status, 0);
+    //         if (!WIFEXITED(ccur->status)) {
+    //             fprintf(stderr, "Child did not exit correctly.\n");
+    //         }
+    //         ccur = ccur->next;
+    //     }
+
+    //     else if (ccur->link == TYPE_BACKGROUND) {
+    //         // Wait for status of current command to update before proceeding
+    //         // waitpid(ccur->pid, &ccur->status, 0);
+    //         // if (!WIFEXITED(ccur->status)) {
+    //         //     fprintf(stderr, "Child did not exit correctly.\n");
+    //         // }
+    //         ccur = ccur->next;
+    //     }
+
+    //     else if (ccur->link == TYPE_AND) {
+    //         // Wait for status of current command to update before proceeding
+    //         waitpid(ccur->pid, &ccur->status, 0);
+    //         if (!WIFEXITED(ccur->status)) {
+    //             fprintf(stderr, "Child did not exit correctly.\n");
+    //         }
+    //         else if (WEXITSTATUS(ccur->status) != 0) {
+    //             while (ccur->link != TYPE_OR && ccur->next != nullptr) {
+    //                 ccur = ccur->next;
+    //             }
+    //         }
+    //     }
+
+    //     else if (ccur->link == TYPE_OR) {
+    //         // Wait for status of current command to update before proceeding
+    //         waitpid(ccur->pid, &ccur->status, 0);
+    //         if (!WIFEXITED(ccur->status)) {
+    //             fprintf(stderr, "Child did not exit correctly.\n");
+    //         }
+    //         else if (WEXITSTATUS(ccur->status) == 0) {
+    //             while (ccur->link != TYPE_AND && ccur->next != nullptr) {
+    //                 ccur = ccur->next;
+    //             }
+    //         }
+    //     }
+    //     ccur = ccur->next;
+    // }
+}
+
+// run_conditional(ccur)
+//    Run the chain of commands that should be ran in the background
+
+
+// void run_conditional(command* cstart) {
+
+// }
 
 // parse_line(s)
 //    Parse the command list in `s` and return it. Returns `nullptr` if
@@ -171,39 +296,61 @@ command* parse_line(const char* s) {
     command* chead = nullptr;    // first command in list
     command* clast = nullptr;    // last command in list
     command* ccur = nullptr;     // current command being built
+    cond_chain.clear();
+    chain* old_chain = new chain;
+
     for (shell_token_iterator it = parser.begin(); it != parser.end(); ++it) {
+        
+
+        // Create at least one new command
+        if (!ccur) {
+            ccur = new command;
+            if (!old_chain->start) {
+                old_chain->start = ccur;
+                cond_chain.push_back(old_chain);
+            }
+            if (clast) {
+                clast->next = ccur;
+                ccur->prev = clast;
+            } else {
+            chead = ccur;
+            }
+        }
+
+        
+        // Execute different blocks based on operators
         switch (it.type()) {
         case TYPE_NORMAL: 
-            if (!ccur) {
-                ccur = new command;
-                if (clast) {
-                    clast->next = ccur;
-                    ccur->prev = clast;
-                } else {
-                chead = ccur;
-                }
-            }
             ccur->args.push_back(it.str());
+            if (it == parser.end()) {
+                old_chain->end = ccur;
+            }
             break;
-        case TYPE_BACKGROUND:
+        case TYPE_BACKGROUND: 
             assert(ccur);
             clast = ccur;
             clast->link = it.type();
+            old_chain->end = ccur;
+            old_chain->background = true;
+            if (it != parser.end()) {
+                chain* new_chain = new chain;
+                old_chain = new_chain;
+            }
             ccur = nullptr;
             break;
-        case TYPE_SEQUENCE:
+        case TYPE_SEQUENCE: 
             assert(ccur);
             clast = ccur;
             clast->link = it.type();
+            old_chain->end = ccur;
+            old_chain->background = false;
+            if (it != parser.end()) {
+                chain* new_chain = new chain;
+                old_chain = new_chain;
+            }
             ccur = nullptr;
             break;
-        case TYPE_AND:
-            assert(ccur);
-            clast = ccur;
-            clast->link = it.type();
-            ccur = nullptr;
-            break;
-        case TYPE_OR:
+        case TYPE_AND: case TYPE_OR:
             assert(ccur);
             clast = ccur;
             clast->link = it.type();
@@ -211,6 +358,28 @@ command* parse_line(const char* s) {
             break;
         }
     }
+    //fprintf(stderr, "Size of chain: %ld\n", cond_chain.size());
+    // chain* curr_chain;
+    // command* cend;
+    // for (size_t i = 0; i != cond_chain.size(); i++) {
+    //     curr_chain = cond_chain[i];
+    //     cend = curr_chain->end;
+    //     //cend->next = nullptr;
+    //     fprintf(stderr, "Next: %p\n", cend->next);
+    // }
+    // ccur = chead;
+    // // int count = 0;
+    // while (ccur != nullptr) {
+    //     // count++;
+    //     if (ccur->link == TYPE_BACKGROUND || ccur->link == TYPE_SEQUENCE) {
+    //         ccur = ccur->next;
+    //         ccur->prev->next == nullptr;
+    //     }
+    //     else {
+    //         ccur = ccur->next;
+    //     }
+    // }
+    // fprintf(stderr, "Count: %d", count);
     return chead;
 }
 
