@@ -10,6 +10,7 @@ Collaborators
 -------------
 Gabe Mehra
 Jules Muhizi
+Aayush Karan
 
 
 Citations

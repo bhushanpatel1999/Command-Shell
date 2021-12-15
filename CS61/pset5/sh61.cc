@@ -31,6 +31,7 @@ struct command {
     command* prev = nullptr;
     pid_t pid = -1;      // process ID running this command, -1 if none
 
+
     // Stores exit status of child process
     int status;
 
@@ -500,12 +501,6 @@ command* parse_line(const char* s) {
             break;
         }
     }
-
-    // Take care of memory leaks
-    delete[] clast;
-    delete[] ccur;
-    delete[] old_chain;
-
     return chead;
 }
 
