@@ -505,7 +505,6 @@ command* parse_line(const char* s) {
     delete[] clast;
     delete[] ccur;
     delete[] old_chain;
-    delete[] new_chain;
 
     return chead;
 }
