@@ -500,6 +500,13 @@ command* parse_line(const char* s) {
             break;
         }
     }
+
+    // Take care of memory leaks
+    delete[] clast;
+    delete[] ccur;
+    delete[] old_chain;
+    delete[] new_chain;
+
     return chead;
 }
 
