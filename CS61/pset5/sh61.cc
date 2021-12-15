@@ -257,22 +257,6 @@ void run_conditional(chain* this_chain) {
     command* ccur = this_chain->start;
     while (ccur != nullptr) {
 
-        // if (ccur->is_cd) {
-        //     const char* new_dir = ccur->working_dir.c_str();
-        //     int check = chdir(new_dir);
-        //     pid_t p = fork();
-        //     if (p == 0) {
-        //         ccur->pid = getpid();
-        //         if (check < 0) {
-        //             _exit(1);
-        //         }
-        //         _exit(0);
-        //     }
-        // }
-        // else {
-        //     ccur->run();
-        // }
-
         ccur->run(getpid());
 
         if (ccur->link == TYPE_PIPE) {
@@ -282,7 +266,7 @@ void run_conditional(chain* this_chain) {
                 ccur = ccur->next;
                 ccur->run(getpid());
             }
-            waitpid(ccur->pid, &ccur->status, 0);
+            //waitpid(ccur->pid, &ccur->status, 0);
         }
 
         if (ccur->link == TYPE_AND) {
