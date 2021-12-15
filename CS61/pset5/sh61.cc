@@ -13,6 +13,14 @@ using namespace std;
 #undef exit
 #define exit __DO_NOT_CALL_EXIT__READ_PROBLEM_SET_DESCRIPTION__
 
+//
+volatile sig_atomic_t term_signal = 0;
+
+void handle_sig(int signal) {
+    term_signal = 1;
+}
+
+
 // struct command
 //    Data structure describing a command. Add your own stuff.
 struct command {
@@ -28,7 +36,7 @@ struct command {
     command();
     ~command();
 
-    pid_t run();
+    pid_t run(pid_t groupid);
 
     // type of connection to next command in linked list
     int link; 
@@ -37,6 +45,9 @@ struct command {
     std::string input_file;
     std::string output_file;
     std::string error_file;
+
+    // Bool for cd command
+    bool is_cd = false;
 };
 
 
@@ -78,6 +89,8 @@ bool is_read_end_open = false;
 // Read end of the previous pipe
 int read_end;
 
+// Working directory
+std::string working_dir;
 
 // COMMAND EXECUTION
 
@@ -97,8 +110,9 @@ int read_end;
 //       setting the child process’s process group. To avoid race conditions,
 //       this will require TWO calls to `setpgid`.
 
-pid_t command::run() {
+pid_t command::run(pid_t groupid) {
     assert(this->args.size() > 0);
+    //fprintf(stderr, "Arg size: %d", this->args.size)
     // Your code here!
     // Declare pipe FDs
     int pfd[2];
@@ -118,6 +132,12 @@ pid_t command::run() {
 
     // Fork child and if valid, run execvp with new argument vector
     pid_t p = fork();
+    if (p == 0) {
+        setpgid(0, groupid);
+    }
+    else {
+        setpgid(p, groupid);
+    }
 
     if (is_read_end_open) {
         if (p == 0) {
@@ -168,7 +188,7 @@ pid_t command::run() {
                     close(fd_1);
                 }  
             }
-            if (!this->input_file.empty()) {
+            if (!this->error_file.empty()) {
                 int fd_2 = open((const char*)this->error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
                 if (fd_2 == -1) {
                     fprintf(stderr, "No such file or directory \n");
@@ -182,7 +202,17 @@ pid_t command::run() {
         }
     }
 
+
     if (p == 0) {
+
+        if (this->is_cd && !working_dir.empty()) {
+            _exit(0);
+        }
+        
+        if (!working_dir.empty()) {
+            assert(chdir(working_dir.c_str()) == 0);
+        }
+
         if (execvp(child_args[0], child_args.data()) < 0) {
             _exit(1);
         }
@@ -223,17 +253,34 @@ pid_t command::run() {
 
 
 void run_conditional(chain* this_chain) {
-
+    setpgid(0, 0);
     command* ccur = this_chain->start;
     while (ccur != nullptr) {
-        ccur->run();
+
+        // if (ccur->is_cd) {
+        //     const char* new_dir = ccur->working_dir.c_str();
+        //     int check = chdir(new_dir);
+        //     pid_t p = fork();
+        //     if (p == 0) {
+        //         ccur->pid = getpid();
+        //         if (check < 0) {
+        //             _exit(1);
+        //         }
+        //         _exit(0);
+        //     }
+        // }
+        // else {
+        //     ccur->run();
+        // }
+
+        ccur->run(getpid());
 
         if (ccur->link == TYPE_PIPE) {
             // ccur = ccur->next;
             // ccur->run();
             while (ccur->link == TYPE_PIPE) {
                 ccur = ccur->next;
-                ccur->run();
+                ccur->run(getpid());
             }
             waitpid(ccur->pid, &ccur->status, 0);
         }
@@ -260,9 +307,9 @@ void run_conditional(chain* this_chain) {
 
         else {
             waitpid(ccur->pid, &ccur->status, 0);
-            if (!WIFEXITED(ccur->status)) {
-                fprintf(stderr, "Child did not exit correctly.\n");
-            }
+            // if (!WIFEXITED(ccur->status)) {
+            //     fprintf(stderr, "Child did not exit correctly.\n");
+            // }
         }
 
         if (ccur->link == TYPE_BACKGROUND || ccur->link == TYPE_SEQUENCE) {
@@ -275,18 +322,22 @@ void run_conditional(chain* this_chain) {
 
 void run_list(command* ccur) {
 
+    (void) ccur;
     chain* curr_chain;
 
     for (size_t i = 0; i != cond_chain.size(); i++) {
         curr_chain = cond_chain[i];
-        if (!curr_chain->background) {
+        pid_t sub = fork();
+        if (sub == 0) {
             run_conditional(curr_chain);
+            _exit(0);
         }
-        else {
-            pid_t childpid = fork();
-            if (childpid == 0) {
-                run_conditional(curr_chain);
-                _exit(0);
+        if (!curr_chain->background) {
+            if (sub > 0) {
+                claim_foreground(sub);
+                int parent_stat;
+                waitpid(sub, &parent_stat, 0);
+                claim_foreground(0);
             }
         }
     }  
@@ -318,39 +369,55 @@ command* parse_line(const char* s) {
 
     for (shell_token_iterator it = parser.begin(); it != parser.end(); ++it) {
         
-
-        // Create at least one new command
-        if (!ccur) {
-            ccur = new command;
-            if (!old_chain->start) {
-                old_chain->start = ccur;
-                cond_chain.push_back(old_chain);
-            }
-            if (clast) {
-                clast->next = ccur;
-                ccur->prev = clast;
-            } else {
-            chead = ccur;
-            }
-        }
-
         
         // Execute different blocks based on operators
         switch (it.type()) {
         case TYPE_NORMAL: 
-            if (input_file) {
+            // Create at least one new command
+            if (!ccur) {
+                ccur = new command;
+                if (!old_chain->start) {
+                    old_chain->start = ccur;
+                    cond_chain.push_back(old_chain);
+                }
+                if (clast) {
+                    clast->next = ccur;
+                    ccur->prev = clast;
+                } else {
+                chead = ccur;
+                }
+            }
+
+            if (it.str().compare(std::string("cd")) == 0) {
+                ccur->is_cd = true;
+                ccur->args.push_back(it.str());
+                break;
+            }
+            
+            else if (input_file) {
                 ccur->input_file = it.str();
                 input_file = false;
             }
-            if (output_file) {
+            else if (output_file) {
                 ccur->output_file = it.str();
                 output_file = false;
             }
-            if (error_file) {
+            else if (error_file) {
                 ccur->error_file = it.str();
                 error_file = false;
             }
-            ccur->args.push_back(it.str());
+            else if (ccur->is_cd) {
+                ccur->args.push_back(it.str());
+                // Check is this is an actual path (from Stack Overflow)
+                struct stat check;
+                if (stat(it.str().c_str(), &check) == 0) {
+                    working_dir = it.str();
+                }
+            }
+            else {
+                ccur->args.push_back(it.str());
+            }
+
             break;
         case TYPE_BACKGROUND: 
             assert(ccur);
@@ -387,45 +454,18 @@ command* parse_line(const char* s) {
             ccur = nullptr;
             break;
         case TYPE_REDIRECT_OP:
-            assert(ccur);
-            clast = ccur;
-            clast->link = it.type();
-            ccur = nullptr;
-            std::string redirect_type = it.str();
-            if (redirect_type.compare(std::string(">")) == 0) {
+            if (it.str().compare(std::string(">")) == 0) {
                 output_file = true;
             }
-            else if (redirect_type.compare(std::string("<")) == 0) {
+            else if (it.str().compare(std::string("<")) == 0) {
                 input_file = true;
             }
-            else if (redirect_type.compare(std::string("2>")) == 0) {
+            else if (it.str().compare(std::string("2>")) == 0) {
                 error_file = true;
             }
             break;
         }
     }
-    //fprintf(stderr, "Size of chain: %ld\n", cond_chain.size());
-    // chain* curr_chain;
-    // command* cend;
-    // for (size_t i = 0; i != cond_chain.size(); i++) {
-    //     curr_chain = cond_chain[i];
-    //     cend = curr_chain->end;
-    //     //cend->next = nullptr;
-    //     fprintf(stderr, "Next: %p\n", cend->next);
-    // }
-    // ccur = chead;
-    // // int count = 0;
-    // while (ccur != nullptr) {
-    //     // count++;
-    //     if (ccur->link == TYPE_BACKGROUND || ccur->link == TYPE_SEQUENCE) {
-    //         ccur = ccur->next;
-    //         ccur->prev->next == nullptr;
-    //     }
-    //     else {
-    //         ccur = ccur->next;
-    //     }
-    // }
-    // fprintf(stderr, "Count: %d", count);
     return chead;
 }
 
@@ -455,6 +495,8 @@ int main(int argc, char* argv[]) {
     claim_foreground(0);
     set_signal_handler(SIGTTOU, SIG_IGN);
 
+    set_signal_handler(SIGTERM, handle_sig);
+
     char buf[BUFSIZ];
     int bufpos = 0;
     bool needprompt = true;
@@ -465,6 +507,11 @@ int main(int argc, char* argv[]) {
             printf("sh61[%d]$ ", getpid());
             fflush(stdout);
             needprompt = false;
+        }
+
+        if (term_signal) {
+            needprompt = true;
+            term_signal = 0;
         }
 
         // Read a string, checking for error or EOF
@@ -494,6 +541,8 @@ int main(int argc, char* argv[]) {
 
         // Handle zombie processes and/or interrupt requests
         // Your code here!
+        int temp_status;
+        while (waitpid(-1, &temp_status, WNOHANG) > 0);
     }
 
     return 0;
