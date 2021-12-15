@@ -13,13 +13,14 @@ using namespace std;
 #undef exit
 #define exit __DO_NOT_CALL_EXIT__READ_PROBLEM_SET_DESCRIPTION__
 
-//
+//variable for signal handler
 volatile sig_atomic_t term_signal = 0;
 
+// Set up signal handler
 void handle_sig(int signal) {
+    (void) signal;
     term_signal = 1;
 }
-
 
 // struct command
 //    Data structure describing a command. Add your own stuff.
@@ -36,6 +37,7 @@ struct command {
     command();
     ~command();
 
+    // Edit to take group pid as input
     pid_t run(pid_t groupid);
 
     // type of connection to next command in linked list
@@ -66,6 +68,7 @@ command::~command() {
 }
 
 
+// Struct to store conditional chains
 struct chain {
     command* start = nullptr;
 
@@ -75,12 +78,15 @@ struct chain {
     ~chain();
 };
 
+// Constructor for chain struct
 chain::chain() {
 }
 
+// Destructor for chain struct
 chain::~chain() {
 }
-// Vector to hold commands that start a background chain
+
+// Vector to hold chains
 std::vector<chain*> cond_chain;
 
 // Bool for pipe hygiene
@@ -89,7 +95,7 @@ bool is_read_end_open = false;
 // Read end of the previous pipe
 int read_end;
 
-// Working directory
+// Working directory for cd commands
 std::string working_dir;
 
 // COMMAND EXECUTION
@@ -112,7 +118,6 @@ std::string working_dir;
 
 pid_t command::run(pid_t groupid) {
     assert(this->args.size() > 0);
-    //fprintf(stderr, "Arg size: %d", this->args.size)
     // Your code here!
     // Declare pipe FDs
     int pfd[2];
@@ -124,7 +129,7 @@ pid_t command::run(pid_t groupid) {
     // Add terminating null character to end arguments
     child_args.push_back(NULL);
 
-
+    // Create pipe
     if (this->link == TYPE_PIPE) {
         int check = pipe(pfd);
         assert(check == 0);
@@ -132,6 +137,8 @@ pid_t command::run(pid_t groupid) {
 
     // Fork child and if valid, run execvp with new argument vector
     pid_t p = fork();
+
+    // Set appropriate group IDs
     if (p == 0) {
         setpgid(0, groupid);
     }
@@ -139,6 +146,7 @@ pid_t command::run(pid_t groupid) {
         setpgid(p, groupid);
     }
 
+    // If pipe from previous command is open, read from it and clean up
     if (is_read_end_open) {
         if (p == 0) {
             dup2(read_end, 0);
@@ -150,6 +158,7 @@ pid_t command::run(pid_t groupid) {
         }
     }
 
+    // If this is a brand new pipe, set up fds and clean up
     if (this->link == TYPE_PIPE) {
         if (p == 0) {
             close(pfd[0]);
@@ -163,10 +172,12 @@ pid_t command::run(pid_t groupid) {
         read_end = pfd[0];
     }
 
+    // Check if redirection is required
     if (!this->input_file.empty() || !this->output_file.empty() || !this->error_file.empty()) {
         if (p == 0) {
+
+            // Open input file in read-only mode and set up fds
             if (!this->input_file.empty()) {
-                //const char* file = this->input_file.c_str();
                 int fd_0 = open((const char*)this->input_file.c_str(), O_RDONLY, 0666);
                 if (fd_0 == -1) {
                     fprintf(stderr, "No such file or directory \n");
@@ -177,6 +188,8 @@ pid_t command::run(pid_t groupid) {
                     close(fd_0);
                 }  
             }
+
+            // Open output file in write-only mode (create if needed) and set up fds
             if (!this->output_file.empty()) {
                 int fd_1 = open((const char*)this->output_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
                 if (fd_1 == -1) {
@@ -188,6 +201,8 @@ pid_t command::run(pid_t groupid) {
                     close(fd_1);
                 }  
             }
+
+            // Open error file in write-only mode (create if needed) and set up fds
             if (!this->error_file.empty()) {
                 int fd_2 = open((const char*)this->error_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
                 if (fd_2 == -1) {
@@ -202,28 +217,89 @@ pid_t command::run(pid_t groupid) {
         }
     }
 
-
+    // Child executes actual command
     if (p == 0) {
 
+        // If this command is cd then exit with good status to keep chain moving
+        // If child changes directory it will not affect parent
         if (this->is_cd && !working_dir.empty()) {
             _exit(0);
         }
         
+        // Have future children change directory if needed for themselves
         if (!working_dir.empty()) {
             assert(chdir(working_dir.c_str()) == 0);
         }
 
+        // Execute command
         if (execvp(child_args[0], child_args.data()) < 0) {
             _exit(1);
         }
         this->pid = getpid();
-        // return this->pid;
     }  
-
-    // fprintf(stderr, "command::run not done yet\n");
     return this->pid;
 }
 
+// run_conditional(chain* this_chain)
+//   Run each conditional chain with forked child
+
+void run_conditional(chain* this_chain) {
+
+    // Set group pids
+    setpgid(0, 0);
+    // First command is start of chain
+    command* ccur = this_chain->start;
+
+    // Iterate through chain
+    while (ccur != nullptr) {
+
+        ccur->run(getpid());
+
+        // If pipe then go through all commands in pipeline and run in parallel
+        if (ccur->link == TYPE_PIPE) {
+            while (ccur->link == TYPE_PIPE) {
+                ccur = ccur->next;
+                ccur->run(getpid());
+            }
+            // Wait on last command in pipeline
+            waitpid(ccur->pid, &ccur->status, 0);
+        }
+
+        if (ccur->link == TYPE_AND) {
+            // Wait for status of current command to update before proceeding
+            waitpid(ccur->pid, &ccur->status, 0);
+            // If failed then skip through the conditional
+            if (!WIFEXITED(ccur->status) || WEXITSTATUS(ccur->status) != 0) {
+                while (ccur->link != TYPE_OR && ccur->next != nullptr) {
+                    ccur = ccur->next;
+                }
+            }
+        }
+
+        else if (ccur->link == TYPE_OR) {
+            // Wait for status of current command to update before proceeding
+            waitpid(ccur->pid, &ccur->status, 0);
+            // If exited correctly then skip through the conditional
+            if (WIFEXITED(ccur->status) && WEXITSTATUS(ccur->status) == 0) {
+                while (ccur->link != TYPE_AND && ccur->next != nullptr) {
+                    ccur = ccur->next;
+                }
+            }
+        }
+
+        // If no special operator then just wait normally
+        else {
+            waitpid(ccur->pid, &ccur->status, 0);
+        }
+
+        // Indicates end of this conditonal so break
+        if (ccur->link == TYPE_BACKGROUND || ccur->link == TYPE_SEQUENCE) {
+            break;
+        }
+
+        ccur = ccur->next;
+    } 
+}
 
 // run_list(c)
 //    Run the command *list* starting at `c`. Initially this just calls
@@ -252,70 +328,27 @@ pid_t command::run(pid_t groupid) {
 //       - Call `claim_foreground(0)` once the pipeline is complete.
 
 
-void run_conditional(chain* this_chain) {
-    setpgid(0, 0);
-    command* ccur = this_chain->start;
-    while (ccur != nullptr) {
-
-        ccur->run(getpid());
-
-        if (ccur->link == TYPE_PIPE) {
-            // ccur = ccur->next;
-            // ccur->run();
-            while (ccur->link == TYPE_PIPE) {
-                ccur = ccur->next;
-                ccur->run(getpid());
-            }
-            //waitpid(ccur->pid, &ccur->status, 0);
-        }
-
-        if (ccur->link == TYPE_AND) {
-            // Wait for status of current command to update before proceeding
-            waitpid(ccur->pid, &ccur->status, 0);
-            if (!WIFEXITED(ccur->status) || WEXITSTATUS(ccur->status) != 0) {
-                while (ccur->link != TYPE_OR && ccur->next != nullptr) {
-                    ccur = ccur->next;
-                }
-            }
-        }
-
-        else if (ccur->link == TYPE_OR) {
-            // Wait for status of current command to update before proceeding
-            waitpid(ccur->pid, &ccur->status, 0);
-            if (WIFEXITED(ccur->status) && WEXITSTATUS(ccur->status) == 0) {
-                while (ccur->link != TYPE_AND && ccur->next != nullptr) {
-                    ccur = ccur->next;
-                }
-            }
-        }
-
-        else {
-            waitpid(ccur->pid, &ccur->status, 0);
-            // if (!WIFEXITED(ccur->status)) {
-            //     fprintf(stderr, "Child did not exit correctly.\n");
-            // }
-        }
-
-        if (ccur->link == TYPE_BACKGROUND || ccur->link == TYPE_SEQUENCE) {
-            break;
-        }
-
-        ccur = ccur->next;
-    } 
-}
-
 void run_list(command* ccur) {
 
     (void) ccur;
+
+    // Hold value of current chain
     chain* curr_chain;
 
+    // Iterate through every chain
     for (size_t i = 0; i != cond_chain.size(); i++) {
         curr_chain = cond_chain[i];
+
+        // Fork child to run each conditional
         pid_t sub = fork();
+
+        // Child runs this
         if (sub == 0) {
             run_conditional(curr_chain);
             _exit(0);
         }
+
+        // Parent waits if foreground chain
         if (!curr_chain->background) {
             if (sub > 0) {
                 claim_foreground(sub);
@@ -343,7 +376,11 @@ command* parse_line(const char* s) {
     command* chead = nullptr;    // first command in list
     command* clast = nullptr;    // last command in list
     command* ccur = nullptr;     // current command being built
+
+    // Clear vector of conditional chains
     cond_chain.clear();
+
+    // Initialize first chain
     chain* old_chain = new chain;
 
     // Bools for redirection
@@ -360,6 +397,7 @@ command* parse_line(const char* s) {
             // Create at least one new command
             if (!ccur) {
                 ccur = new command;
+                // Set to first command in chain
                 if (!old_chain->start) {
                     old_chain->start = ccur;
                     cond_chain.push_back(old_chain);
@@ -372,12 +410,14 @@ command* parse_line(const char* s) {
                 }
             }
 
+            // If "cd" then toggle boolean
             if (it.str().compare(std::string("cd")) == 0) {
                 ccur->is_cd = true;
                 ccur->args.push_back(it.str());
                 break;
             }
             
+            // If any redirections needed from previous token, add this token as file name
             else if (input_file) {
                 ccur->input_file = it.str();
                 input_file = false;
@@ -390,8 +430,11 @@ command* parse_line(const char* s) {
                 ccur->error_file = it.str();
                 error_file = false;
             }
+
+            // Add cd args to command but if valid path then add to global working_dir
             else if (ccur->is_cd) {
                 ccur->args.push_back(it.str());
+
                 // Check is this is an actual path (from Stack Overflow)
                 struct stat check;
                 if (stat(it.str().c_str(), &check) == 0) {
@@ -404,9 +447,11 @@ command* parse_line(const char* s) {
 
             break;
         case TYPE_BACKGROUND: 
+            // Create new chain and command
             assert(ccur);
             clast = ccur;
             clast->link = it.type();
+            // Set that last chain was background
             old_chain->background = true;
             if (it != parser.end()) {
                 chain* new_chain = new chain;
@@ -415,9 +460,11 @@ command* parse_line(const char* s) {
             ccur = nullptr;
             break;
         case TYPE_SEQUENCE: 
+            // Create new chain and end command
             assert(ccur);
             clast = ccur;
             clast->link = it.type();
+            // Set that last chain was foreground
             old_chain->background = false;
             if (it != parser.end()) {
                 chain* new_chain = new chain;
@@ -426,18 +473,21 @@ command* parse_line(const char* s) {
             ccur = nullptr;
             break;
         case TYPE_AND: case TYPE_OR:
+            // Set link and end command
             assert(ccur);
             clast = ccur;
             clast->link = it.type();
             ccur = nullptr;
             break;
         case TYPE_PIPE:
+            // Set link and end command
             assert(ccur);
             clast = ccur;
             clast->link = it.type();
             ccur = nullptr;
             break;
         case TYPE_REDIRECT_OP:
+            // Toggle booleans so next token can be added as file name
             if (it.str().compare(std::string(">")) == 0) {
                 output_file = true;
             }
@@ -479,6 +529,7 @@ int main(int argc, char* argv[]) {
     claim_foreground(0);
     set_signal_handler(SIGTTOU, SIG_IGN);
 
+    // Signal handler for control-C
     set_signal_handler(SIGTERM, handle_sig);
 
     char buf[BUFSIZ];
@@ -493,6 +544,7 @@ int main(int argc, char* argv[]) {
             needprompt = false;
         }
 
+        // If signal toggled, make new prompt
         if (term_signal) {
             needprompt = true;
             term_signal = 0;
@@ -525,6 +577,8 @@ int main(int argc, char* argv[]) {
 
         // Handle zombie processes and/or interrupt requests
         // Your code here!
+
+        // Waitpid with -1 to wait for all child processes
         int temp_status;
         while (waitpid(-1, &temp_status, WNOHANG) > 0);
     }
