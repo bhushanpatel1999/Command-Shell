@@ -35,4 +35,4 @@ sh61[[PROCESS_ID]]$
 * Bhushan Patel
 
 ## Acknowledgments
-COMPSCI: Systems Programming staff
+* COMPSCI: Systems Programming staff
