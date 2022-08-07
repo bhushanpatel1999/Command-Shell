@@ -1,5 +1,5 @@
 # Command Shell
-Coding a command shell capable of simple commands, background commands, conditional commands, redirections, pipes, and command interruptions.
+Coding a command shell capable of simple commands, background commands, conditional commands, redirections, pipes, and keyboard interruptions.
 
 ## Description
 
